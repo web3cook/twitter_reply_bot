@@ -1,0 +1,106 @@
+body {
+  width: 200px;
+  padding: 20px;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+}
+
+h1 {
+  font-size: 18px;
+  margin: 0 0 15px 0;
+  color: #1da1f2;
+}
+
+button {
+  width: 100%;
+  padding: 12px;
+  background-color: #1da1f2;
+  color: white;
+  border: none;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color 0.2s;
+}
+
+button:hover {
+  background-color: #1a91da;
+}
+
+button:active {
+  background-color: #1681c2;
+}
+
+button:disabled {
+  background-color: #ccc;
+  color: #666;
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+button:disabled:hover {
+  background-color: #ccc;
+}
+
+#openLists {
+  margin-top: 10px;
+  position: relative;
+}
+
+/* Custom tooltip for disabled button */
+#openLists:disabled {
+  position: relative;
+}
+
+#openLists:disabled::after {
+  content: attr(title);
+  position: absolute;
+  bottom: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  margin-bottom: 5px;
+  padding: 8px 12px;
+  background-color: #333;
+  color: white;
+  border-radius: 4px;
+  font-size: 12px;
+  white-space: pre-line;
+  text-align: center;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.3s;
+  z-index: 1000;
+  min-width: 150px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+}
+
+#openLists:disabled:hover::after {
+  opacity: 1;
+}
+
+#listInteraction {
+  margin-top: 15px;
+  padding-top: 15px;
+  border-top: 1px solid #e0e0e0;
+}
+
+#listNameInput {
+  width: 100%;
+  padding: 10px;
+  margin-bottom: 10px;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  font-size: 14px;
+  box-sizing: border-box;
+}
+
+#listNameInput:focus {
+  outline: none;
+  border-color: #1da1f2;
+  box-shadow: 0 0 0 2px rgba(29, 161, 242, 0.2);
+}
+
+#interactWithList {
+  margin-top: 0;
+}
+
