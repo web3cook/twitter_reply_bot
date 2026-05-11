@@ -1,5 +1,12 @@
 {
+  "scripts": {
+    "ai": "node scripts/ai.js"
+  },
   "dependencies": {
-    "chrome-types": "^0.1.404"
+    "@google/genai": "^1.34.0",
+    "ai": "^6.0.21",
+    "chrome-types": "^0.1.404",
+    "dotenv": "^17.2.3",
+    "openai": "^6.32.0"
   }
 }
