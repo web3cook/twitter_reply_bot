@@ -52,6 +52,10 @@
 
       <!-- Actions (on any x.com page) -->
       <section id="list-section" class="hidden">
+        <div class="post-count-row">
+          <label class="post-count-label">Posts to reply</label>
+          <input id="post-count-input" type="number" min="1" max="500" value="10" />
+        </div>
         <button id="btn-generate" class="full-width">Generate Replies</button>
         <div id="bulk-row" class="hidden">
           <button id="btn-draft-all" disabled class="secondary small">Draft All</button>
@@ -82,6 +86,23 @@
               <button id="btn-save-key" class="small">Save</button>
             </div>
             <span id="key-saved-msg" class="hidden success-msg">Saved!</span>
+          </div>
+          <div class="settings-row">
+            <label class="settings-label">AI Model</label>
+            <select id="model-select">
+              <option value="gpt-5.4">gpt-5.4 (default)</option>
+              <option value="gpt-4o">gpt-4o</option>
+              <option value="gpt-4o-mini">gpt-4o-mini</option>
+              <option value="gpt-4-turbo">gpt-4-turbo</option>
+              <option value="gpt-3.5-turbo">gpt-3.5-turbo</option>
+              <option value="custom">Custom…</option>
+            </select>
+            <input id="model-custom-input" type="text" placeholder="Enter model name" class="hidden" />
+          </div>
+          <div class="settings-row">
+            <label class="settings-label">Open As</label>
+            <div id="mode-buttons" class="mode-buttons"></div>
+            <span id="mode-saved-msg" class="hidden success-msg">Saved — reopen the extension to apply</span>
           </div>
         </div>
       </details>

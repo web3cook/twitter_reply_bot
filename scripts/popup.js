@@ -25,6 +25,7 @@ let replyItems       = [];
 let composeInjected  = false;
 let customVoices     = [];
 let selectedVoiceKey = 'jonwu';
+let loggedInUsername = null;
 
 const loginModal             = document.getElementById('login-modal');
 const btnOpenXLogin          = document.getElementById('btn-open-x-login');
@@ -51,6 +52,11 @@ const cardsSection           = document.getElementById('cards-section');
 const apiKeyInput            = document.getElementById('api-key-input');
 const btnSaveKey             = document.getElementById('btn-save-key');
 const keySavedMsg            = document.getElementById('key-saved-msg');
+const modelSelect            = document.getElementById('model-select');
+const modelCustomInput       = document.getElementById('model-custom-input');
+const modeButtonsContainer   = document.getElementById('mode-buttons');
+const modeSavedMsg           = document.getElementById('mode-saved-msg');
+const postCountInput         = document.getElementById('post-count-input');
 const voiceButtonsContainer  = document.getElementById('voice-buttons');
 const customVoiceScreen      = document.getElementById('custom-voice-screen');
 const btnBack                = document.getElementById('btn-back');
@@ -141,6 +147,17 @@ function renderVoiceButtons() {
   voiceButtonsContainer.appendChild(addBtn);
 }
 
+function renderModeButtons(activeMode) {
+  modeButtonsContainer.innerHTML = '';
+  [['sidepanel', 'Side Panel'], ['popup', 'Popup']].forEach(([mode, label]) => {
+    const btn = document.createElement('button');
+    btn.className    = 'mode-btn' + (activeMode === mode ? ' active' : '');
+    btn.dataset.mode = mode;
+    btn.textContent  = label;
+    modeButtonsContainer.appendChild(btn);
+  });
+}
+
 function renderSavedVoicesList() {
   if (customVoices.length === 0) {
     savedVoicesSection.classList.add('hidden');
@@ -168,6 +185,74 @@ function hideCustomVoiceScreen() {
   customVoiceScreen.classList.add('hidden');
 }
 
+function getSelectedModel() {
+  if (modelSelect.value === 'custom') {
+    return modelCustomInput.value.trim() || 'gpt-5.4';
+  }
+  return modelSelect.value || 'gpt-5.4';
+}
+
+async function fetchAndPopulateModels(apiKey, savedModelName = 'gpt-5.4') {
+  if (!apiKey) return;
+
+  modelSelect.innerHTML = '<option disabled selected>Loading models…</option>';
+  modelSelect.disabled  = true;
+
+  try {
+    const resp = await fetch('https://api.openai.com/v1/models', {
+      headers: { 'Authorization': `Bearer ${apiKey}` },
+    });
+    if (!resp.ok) throw new Error(`${resp.status}`);
+    const { data } = await resp.json();
+
+    const ids = data
+      .filter(m => /^(gpt-|o\d|chatgpt-)/.test(m.id))
+      .sort((a, b) => b.created - a.created)
+      .map(m => m.id);
+
+    modelSelect.innerHTML = '';
+    modelSelect.disabled  = false;
+    ids.forEach(id => {
+      const opt = document.createElement('option');
+      opt.value = id;
+      opt.textContent = id;
+      modelSelect.appendChild(opt);
+    });
+
+    const customOpt = document.createElement('option');
+    customOpt.value = 'custom';
+    customOpt.textContent = 'Custom…';
+    modelSelect.appendChild(customOpt);
+
+    if (ids.includes(savedModelName)) {
+      modelSelect.value = savedModelName;
+      modelCustomInput.classList.add('hidden');
+    } else {
+      modelSelect.value         = 'custom';
+      modelCustomInput.value    = savedModelName;
+      modelCustomInput.classList.remove('hidden');
+    }
+  } catch {
+    modelSelect.disabled  = false;
+    modelSelect.innerHTML = `
+      <option value="gpt-5.4">gpt-5.4 (default)</option>
+      <option value="gpt-4o">gpt-4o</option>
+      <option value="gpt-4o-mini">gpt-4o-mini</option>
+      <option value="gpt-4-turbo">gpt-4-turbo</option>
+      <option value="gpt-3.5-turbo">gpt-3.5-turbo</option>
+      <option value="custom">Custom…</option>
+    `;
+    const fallbacks = ['gpt-5.4', 'gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo', 'gpt-3.5-turbo'];
+    if (fallbacks.includes(savedModelName)) {
+      modelSelect.value = savedModelName;
+    } else {
+      modelSelect.value      = 'custom';
+      modelCustomInput.value = savedModelName;
+      modelCustomInput.classList.remove('hidden');
+    }
+  }
+}
+
 function resolvePrompt() {
   if (selectedVoiceKey.startsWith('cv:')) {
     const cv = customVoices.find(v => v.id === selectedVoiceKey);
@@ -176,7 +261,7 @@ function resolvePrompt() {
   return VOICES[selectedVoiceKey]?.prompt || VOICES.jonwu.prompt;
 }
 
-async function callOpenAI(tweetText, apiKey, prompt) {
+async function callOpenAI(tweetText, apiKey, prompt, model) {
   const resp = await fetch('https://api.openai.com/v1/responses', {
     method: 'POST',
     headers: {
@@ -184,7 +269,7 @@ async function callOpenAI(tweetText, apiKey, prompt) {
       'Authorization': `Bearer ${apiKey}`,
     },
     body: JSON.stringify({
-      model: 'gpt-5.4',
+      model: model || 'gpt-5.4',
       max_output_tokens: 150,
       temperature: 0.7,
       instructions: prompt,
@@ -281,7 +366,10 @@ function renderCard(item, idx) {
   card.innerHTML   = `
     <div class="card-header">
       <span class="card-username">@${item.post.username || '?'}</span>
-      <span class="card-status ${item.status}">${statusToLabel(item.status)}</span>
+      <div class="card-header-right">
+        <span class="card-status ${item.status}">${statusToLabel(item.status)}</span>
+        <button class="btn-remove-card" data-idx="${idx}" title="Remove">×</button>
+      </div>
     </div>
     <div class="card-tweet">${escapeHtml(item.post.tweetText)}</div>
     <textarea class="card-textarea" rows="3">${escapeHtml(item.reply || '')}</textarea>
@@ -393,9 +481,13 @@ async function generateReplies() {
 
   let posts;
   try {
+    const maxPosts = Math.max(1, parseInt(postCountInput.value, 10) || 10);
     await injectFile(xTabId, 'scripts/page_scraper.js');
-    const result = await callPageFn(xTabId, () => autoScrollAndScrape(), []);
+    const result = await callPageFn(xTabId, (n) => autoScrollAndScrape(n), [maxPosts]);
     posts = result.posts;
+    if (loggedInUsername) {
+      posts = posts.filter(p => p.username?.toLowerCase() !== loggedInUsername);
+    }
   } catch (err) {
     alert('Scrape failed: ' + err.message);
     btnGenerate.disabled    = false;
@@ -404,7 +496,7 @@ async function generateReplies() {
   }
 
   if (!posts || posts.length === 0) {
-    alert('No tweets found from the last 2 hours. Make sure there are recent tweets visible on the page.');
+    alert('No tweets found. Make sure there are tweets visible on the page.');
     btnGenerate.disabled    = false;
     btnGenerate.textContent = 'Generate Replies';
     return;
@@ -423,6 +515,7 @@ async function generateReplies() {
   progressBar.style.width = '0%';
 
   const prompt = resolvePrompt();
+  const model  = getSelectedModel();
 
   for (let i = 0; i < posts.length; i++) {
     const post = posts[i];
@@ -438,7 +531,7 @@ async function generateReplies() {
       status = prev.status;
     } else {
       try {
-        reply = await callOpenAI(post.tweetText, openaiApiKey, prompt);
+        reply = await callOpenAI(post.tweetText, openaiApiKey, prompt, model);
       } catch (err) {
         status = 'error';
         console.error('OpenAI error for', post.tweetUrl, err);
@@ -494,9 +587,15 @@ async function clearExtensionData() {
 }
 
 async function init() {
-  const stored = await chrome.storage.local.get(['openaiApiKey', 'selectedVoice', 'customVoices']);
+  const stored = await chrome.storage.local.get(['openaiApiKey', 'selectedVoice', 'customVoices', 'displayMode', 'selectedModel', 'customModel']);
 
   if (stored.openaiApiKey) apiKeyInput.value = stored.openaiApiKey;
+
+  await fetchAndPopulateModels(stored.openaiApiKey, stored.selectedModel || 'gpt-5.4');
+
+  const displayMode = stored.displayMode || 'sidepanel';
+  renderModeButtons(displayMode);
+  if (displayMode === 'popup') document.body.classList.add('popup-mode');
 
   customVoices     = stored.customVoices || [];
   selectedVoiceKey = stored.selectedVoice || 'jonwu';
@@ -511,7 +610,6 @@ async function init() {
     const loggedIn = await checkLogin(xTabId);
 
     if (loggedIn) {
-      let loggedInUsername = null;
       try {
         loggedInUsername = await callPageFn(xTabId, () => {
           const a = document.querySelector('[data-testid="AppTabBar_Profile_Link"]');
@@ -529,7 +627,7 @@ async function init() {
       if (isOwnProfile) {
         showBanner('warn', "This is your profile. Open a page with other people's posts for replies.");
       } else if (!isListPage) {
-        showBanner('tip', 'Works best on X List pages — go to My Lists for the best results.');
+        showBanner('tip', 'Works best on X List pages. Go to My Lists for the best results.');
       }
 
       listSection.classList.remove('hidden');
@@ -627,13 +725,41 @@ async function init() {
     if (!k) return;
     await chrome.storage.local.set({ openaiApiKey: k });
     flashMessage(keySavedMsg);
+    await fetchAndPopulateModels(k, getSelectedModel());
+  });
+
+  modelSelect.addEventListener('change', async () => {
+    const isCustom = modelSelect.value === 'custom';
+    modelCustomInput.classList.toggle('hidden', !isCustom);
+    if (!isCustom) {
+      await chrome.storage.local.set({ selectedModel: modelSelect.value });
+    }
+  });
+
+  modelCustomInput.addEventListener('change', async () => {
+    const val = modelCustomInput.value.trim();
+    if (val) await chrome.storage.local.set({ selectedModel: val });
+  });
+
+  modeButtonsContainer.addEventListener('click', async (e) => {
+    const btn = e.target.closest('.mode-btn');
+    if (!btn) return;
+    const mode = btn.dataset.mode;
+    await chrome.storage.local.set({ displayMode: mode });
+    document.body.classList.toggle('popup-mode', mode === 'popup');
+    renderModeButtons(mode);
+    flashMessage(modeSavedMsg);
   });
 
   cardsSection.addEventListener('click', async (e) => {
     const idx = parseInt(e.target.dataset.idx, 10);
     if (isNaN(idx)) return;
 
-    if (e.target.classList.contains('btn-save-draft')) {
+    if (e.target.classList.contains('btn-remove-card')) {
+      replyItems.splice(idx, 1);
+      await saveItems();
+      renderCards();
+    } else if (e.target.classList.contains('btn-save-draft')) {
       await saveSingleDraft(idx);
     } else if (e.target.classList.contains('btn-post-reply')) {
       await postSingleReply(idx);
