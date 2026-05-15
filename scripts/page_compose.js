@@ -53,14 +53,19 @@ function findArticleByStatusId(statusId) {
 async function insertTextIntoCompose(replyText) {
   const textarea = await waitFor('[data-testid="tweetTextarea_0"][contenteditable="true"]');
 
-  // Step 2: click "Post your reply" to activate the compose box
   textarea.click();
   await sleep(300);
   textarea.focus();
 
-  // Step 3: paste the reply text via execCommand to trigger React's handlers
+  // Collapse multiple blank lines to single newline so spacing is clean
+  const cleanText = replyText.replace(/\n{2,}/g, '\n').trim();
+
+  // Use clipboard paste — more reliable than execCommand for multi-line text
+  // in React's contenteditable (execCommand drops everything before the last \n)
   document.execCommand('selectAll', false, null);
-  document.execCommand('insertText', false, replyText);
+  const dt = new DataTransfer();
+  dt.setData('text/plain', cleanText);
+  textarea.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
   await sleep(400);
 
   return textarea;

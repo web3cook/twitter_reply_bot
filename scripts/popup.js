@@ -38,6 +38,7 @@ const btnOpenX               = document.getElementById('btn-open-x');
 const btnGoList              = document.getElementById('btn-go-list');
 const listSection            = document.getElementById('list-section');
 const btnGenerate            = document.getElementById('btn-generate');
+const btnReplyCurrent        = document.getElementById('btn-reply-current');
 const bulkRow                = document.getElementById('bulk-row');
 const btnDraftAll            = document.getElementById('btn-draft-all');
 const btnPostAll             = document.getElementById('btn-post-all');
@@ -282,7 +283,7 @@ async function callOpenAI(tweetText, apiKey, prompt, model) {
     throw new Error(err?.error?.message || `OpenAI error ${resp.status}`);
   }
   const data = await resp.json();
-  return data.output[0].content[0].text.trim();
+  return data.output[0].content[0].text.replace(/\n{2,}/g, '\n').trim();
 }
 
 async function injectFile(tabId, file) {
@@ -466,40 +467,14 @@ async function postSingleReply(idx) {
   await executeCompose(idx, (url, text) => postReply(url, text), 'posting', 'posted');
 }
 
-async function generateReplies() {
-  const { openaiApiKey } = await chrome.storage.local.get('openaiApiKey');
-  if (!openaiApiKey) {
-    alert('Set your OpenAI API key in Settings first.');
-    document.getElementById('settings-section').open = true;
-    return;
-  }
-
-  if (!await ensureXTab()) return;
-
-  btnGenerate.disabled    = true;
-  btnGenerate.textContent = 'Scrolling & scraping…';
-
-  let posts;
-  try {
-    const maxPosts = Math.max(1, parseInt(postCountInput.value, 10) || 10);
-    await injectFile(xTabId, 'scripts/page_scraper.js');
-    const result = await callPageFn(xTabId, (n) => autoScrollAndScrape(n), [maxPosts]);
-    posts = result.posts;
-    if (loggedInUsername) {
-      posts = posts.filter(p => p.username?.toLowerCase() !== loggedInUsername);
-    }
-  } catch (err) {
-    alert('Scrape failed: ' + err.message);
-    btnGenerate.disabled    = false;
-    btnGenerate.textContent = 'Generate Replies';
-    return;
+async function processPostsToReplies(posts, openaiApiKey) {
+  if (loggedInUsername) {
+    posts = posts.filter(p => p.username?.toLowerCase() !== loggedInUsername);
   }
 
   if (!posts || posts.length === 0) {
     alert('No tweets found. Make sure there are tweets visible on the page.');
-    btnGenerate.disabled    = false;
-    btnGenerate.textContent = 'Generate Replies';
-    return;
+    return false;
   }
 
   const doneByUrl = new Map(
@@ -546,9 +521,69 @@ async function generateReplies() {
   progressText.textContent = `Done — ${posts.length} tweet${posts.length === 1 ? '' : 's'} processed`;
 
   await saveItems();
+  updateDraftCounter();
+  return true;
+}
+
+async function generateReplies() {
+  const { openaiApiKey } = await chrome.storage.local.get('openaiApiKey');
+  if (!openaiApiKey) {
+    alert('Set your OpenAI API key in Settings first.');
+    document.getElementById('settings-section').open = true;
+    return;
+  }
+
+  if (!await ensureXTab()) return;
+
+  btnGenerate.disabled    = true;
+  btnGenerate.textContent = 'Scrolling & scraping…';
+
+  let posts;
+  try {
+    const maxPosts = Math.max(1, parseInt(postCountInput.value, 10) || 10);
+    await injectFile(xTabId, 'scripts/page_scraper.js');
+    const result = await callPageFn(xTabId, (n) => autoScrollAndScrape(n), [maxPosts]);
+    posts = result.posts;
+  } catch (err) {
+    alert('Scrape failed: ' + err.message);
+    btnGenerate.disabled    = false;
+    btnGenerate.textContent = 'Generate Replies';
+    return;
+  }
+
+  await processPostsToReplies(posts, openaiApiKey);
   btnGenerate.disabled    = false;
   btnGenerate.textContent = 'Generate Replies';
-  updateDraftCounter();
+}
+
+async function generateCurrentReplies() {
+  const { openaiApiKey } = await chrome.storage.local.get('openaiApiKey');
+  if (!openaiApiKey) {
+    alert('Set your OpenAI API key in Settings first.');
+    document.getElementById('settings-section').open = true;
+    return;
+  }
+
+  if (!await ensureXTab()) return;
+
+  btnReplyCurrent.disabled    = true;
+  btnReplyCurrent.textContent = 'Scanning…';
+
+  let posts;
+  try {
+    await injectFile(xTabId, 'scripts/page_scraper.js');
+    const result = await callPageFn(xTabId, () => scrapeCurrentView());
+    posts = result.posts;
+  } catch (err) {
+    alert('Scrape failed: ' + err.message);
+    btnReplyCurrent.disabled    = false;
+    btnReplyCurrent.textContent = 'Reply Current';
+    return;
+  }
+
+  await processPostsToReplies(posts, openaiApiKey);
+  btnReplyCurrent.disabled    = false;
+  btnReplyCurrent.textContent = 'Reply Current';
 }
 
 async function draftAll() {
@@ -716,6 +751,7 @@ async function init() {
   });
 
   btnGenerate.addEventListener('click', generateReplies);
+  btnReplyCurrent.addEventListener('click', generateCurrentReplies);
   btnDraftAll.addEventListener('click', draftAll);
   btnPostAll.addEventListener('click', postAll);
   btnClearData.addEventListener('click', clearExtensionData);

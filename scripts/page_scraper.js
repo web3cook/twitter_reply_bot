@@ -70,3 +70,33 @@ async function autoScrollAndScrape(maxPosts = 10) {
 
   return { posts, loggedIn: isLoggedIn() };
 }
+
+function scrapeCurrentView() {
+  const viewportHeight = window.innerHeight;
+  const seenUrls = new Set();
+  const posts = [];
+
+  for (const article of document.querySelectorAll('article[data-testid="tweet"]')) {
+    const rect = article.getBoundingClientRect();
+    if (rect.bottom <= 0 || rect.top >= viewportHeight) continue;
+
+    const tweetTextEl = article.querySelector('[data-testid="tweetText"]');
+    if (!tweetTextEl) continue;
+
+    const tweetText = tweetTextEl.innerText.trim();
+    if (!tweetText) continue;
+
+    const tweetUrl = getArticleTweetUrl(article);
+    if (!tweetUrl || seenUrls.has(tweetUrl)) continue;
+
+    seenUrls.add(tweetUrl);
+    posts.push({
+      username:      getArticleUsername(article),
+      tweetText,
+      tweetUrl,
+      timePostedISO: getArticleTimestamp(article),
+    });
+  }
+
+  return { posts, loggedIn: isLoggedIn() };
+}

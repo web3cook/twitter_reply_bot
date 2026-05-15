@@ -156,6 +156,9 @@ header {
 .banner.tip  { background: rgba(74, 144, 217, 0.07); color: #7aaddc; }
 .banner.warn { background: var(--warning-dim); color: var(--warning); }
 .banner-icon { flex-shrink: 0; font-size: 11px; margin-top: 1px; }
+.creator-banner { color: var(--text-2); font-size: 11px; }
+.creator-link { color: var(--accent); text-decoration: none; font-weight: 500; }
+.creator-link:hover { text-decoration: underline; }
 
 /* ── Sections ── */
 section {
@@ -498,6 +501,16 @@ details#settings-section[open] > summary {
   background: var(--accent-dim);
   color: var(--accent);
   border-color: rgba(74, 144, 217, 0.35);
+}
+
+/* ── Generate buttons row ── */
+.generate-row {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 0;
+}
+.generate-row button {
+  flex: 1;
 }
 
 /* ── Post count row ── */

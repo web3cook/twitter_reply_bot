@@ -38,6 +38,11 @@
         <span id="context-banner-text"></span>
       </div>
 
+      <div class="banner creator-banner">
+        <span class="banner-icon">✦</span>
+        <span>Chat with creator at <a href="https://x.com/sincerelycheesy" target="_blank" class="creator-link">@sincerelycheesy</a> / <a href="https://x.com/web3cook" target="_blank" class="creator-link">@web3cook</a></span>
+      </div>
+
       <!-- Voice picker — prominent buttons above nav -->
       <section id="voice-section">
         <div class="section-label">Reply as</div>
@@ -56,7 +61,10 @@
           <label class="post-count-label">Posts to reply</label>
           <input id="post-count-input" type="number" min="1" max="500" value="10" />
         </div>
-        <button id="btn-generate" class="full-width">Generate Replies</button>
+        <div class="generate-row">
+          <button id="btn-generate">Generate Replies</button>
+          <button id="btn-reply-current">Reply Current</button>
+        </div>
         <div id="bulk-row" class="hidden">
           <button id="btn-draft-all" disabled class="secondary small">Draft All</button>
           <button id="btn-post-all"  disabled class="secondary small">Post All</button>
