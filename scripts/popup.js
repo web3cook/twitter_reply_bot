@@ -86,7 +86,7 @@ function escapeHtml(str) {
 }
 
 async function getXTab() {
-  const tabs = await chrome.tabs.query({ url: ['https://x.com/*', 'https://twitter.com/*'] });
+  const tabs = await chrome.tabs.query({ url: ['https://x.com/*'] });
   return tabs.length ? tabs[0] : null;
 }
 
@@ -112,7 +112,7 @@ async function focusOrOpenXTab() {
 async function updateOpenXButton() {
   const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
   const isXActive = activeTab?.url?.startsWith('https://x.com') ||
-                    activeTab?.url?.startsWith('https://twitter.com');
+                    false;
   if (isXActive) {
     btnOpenX.classList.add('secondary');
     btnOpenX.textContent = 'X Open';

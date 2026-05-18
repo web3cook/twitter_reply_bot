@@ -1,7 +1,7 @@
 {
   "name": "brainX",
   "short_name": "brainX",
-  "description": "Scrape X/Twitter list pages, generate AI-powered replies using customizable voice personas, and save as drafts or post directly.",
+  "description": "Looks at the twitter posts and reply according to the persona created by you or already present",
   "version": "1.0",
   "manifest_version": 3,
   "minimum_chrome_version": "116",
@@ -13,9 +13,7 @@
     "sidePanel"
   ],
   "host_permissions": [
-    "https://x.com/*",
-    "https://twitter.com/*",
-    "https://api.openai.com/*"
+    "https://x.com/*"
   ],
   "icons": {
     "16": "icons/icon16.png",
