@@ -1,7 +1,7 @@
 import { JonWu, Naruto, Mert, Medusa, ChainYoda } from './voices.js';
 
 const STORAGE_KEY    = 'xReplyBotData';
-const DRAFT_DELAY_MS = 1200;
+const DRAFT_DELAY_MS = 500;
 
 const VOICES = {
   jonwu:     { label: 'Jon Wu',    prompt: JonWu },

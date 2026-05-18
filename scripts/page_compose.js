@@ -36,6 +36,21 @@ function waitForEnabled(selector, timeout = 10000) {
   });
 }
 
+function waitForGone(selector, timeout = 10000) {
+  return new Promise((resolve, reject) => {
+    const start = Date.now();
+    const interval = setInterval(() => {
+      if (!document.querySelector(selector)) {
+        clearInterval(interval);
+        resolve();
+      } else if (Date.now() - start > timeout) {
+        clearInterval(interval);
+        reject(new Error(`Post not confirmed — compose dialog still open after ${timeout}ms`));
+      }
+    }, 200);
+  });
+}
+
 function getStatusId(tweetUrl) {
   const m = tweetUrl.match(/\/status\/(\d+)/);
   return m ? m[1] : null;
@@ -54,7 +69,7 @@ async function insertTextIntoCompose(replyText) {
   const textarea = await waitFor('[data-testid="tweetTextarea_0"][contenteditable="true"]');
 
   textarea.click();
-  await sleep(300);
+  await sleep(100);
   textarea.focus();
 
   // Collapse multiple blank lines to single newline so spacing is clean
@@ -66,7 +81,7 @@ async function insertTextIntoCompose(replyText) {
   const dt = new DataTransfer();
   dt.setData('text/plain', cleanText);
   textarea.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
-  await sleep(400);
+  await sleep(150);
 
   return textarea;
 }
@@ -94,11 +109,15 @@ async function postReply(tweetUrl, replyText) {
   const article = findArticleByStatusId(statusId);
   if (!article) throw new Error('Could not find article for status: ' + statusId);
 
+  // Scroll article into view so X doesn't virtual-DOM it away mid-interaction
+  article.scrollIntoView({ behavior: 'instant', block: 'center' });
+  await sleep(150);
+
   // Step 1: click the reply icon on the tweet
   const replyBtn = article.querySelector('[data-testid="reply"]');
   if (!replyBtn) throw new Error('No reply button found on article');
   replyBtn.click();
-  await sleep(600);
+  // no fixed sleep — insertTextIntoCompose uses waitFor to detect when compose is ready
 
   // Steps 2 & 3: click compose box then paste text
   await insertTextIntoCompose(replyText);
@@ -111,7 +130,9 @@ async function postReply(tweetUrl, replyText) {
 
   // Step 5: press the reply button
   postBtn.click();
-  await sleep(500);
+
+  // Step 6: confirm post was actually sent — wait for compose textarea to disappear
+  await waitForGone('[data-testid="tweetTextarea_0"]', 10000);
 
   return { success: true };
 }

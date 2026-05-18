@@ -1,6 +1,6 @@
 {
-  "name": "X Reply Bot",
-  "short_name": "Reply Bot",
+  "name": "brainX",
+  "short_name": "brainX",
   "description": "Scrape X/Twitter list pages, generate AI-powered replies using customizable voice personas, and save as drafts or post directly.",
   "version": "1.0",
   "manifest_version": 3,

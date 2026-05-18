@@ -9,9 +9,9 @@
   --surface:     #161b22;
   --surface-2:   #1c2128;
   --border:      #21262d;
-  --accent:      #4a90d9;
+  --accent:      #04c550;
   --accent-warm: #e8a87c;
-  --accent-dim:  rgba(74, 144, 217, 0.13);
+  --accent-dim:  rgba(4, 197, 80, 0.13);
   --text:        #e6edf3;
   --text-2:      #8b949e;
   --text-3:      #484f58;
@@ -153,7 +153,7 @@ header {
   line-height: 1.45;
   border-bottom: 1px solid var(--border);
 }
-.banner.tip  { background: rgba(74, 144, 217, 0.07); color: #7aaddc; }
+.banner.tip  { background: rgba(4, 197, 80, 0.07); color: #2dc653; }
 .banner.warn { background: var(--warning-dim); color: var(--warning); }
 .banner-icon { flex-shrink: 0; font-size: 11px; margin-top: 1px; }
 .creator-banner { color: var(--text-2); font-size: 11px; }
@@ -172,7 +172,7 @@ button {
   align-items: center;
   justify-content: center;
   background: var(--accent);
-  color: #fff;
+  color: #0d1117;
   border: none;
   border-radius: var(--r-sm);
   padding: 7px 14px;
@@ -210,7 +210,7 @@ button.success {
 button.posted {
   background: var(--accent-dim);
   color: var(--accent);
-  border: 1px solid rgba(74, 144, 217, 0.28);
+  border: 1px solid rgba(4, 197, 80, 0.28);
   cursor: default;
 }
 
@@ -317,7 +317,7 @@ button.small { padding: 5px 11px; font-size: 11px; }
 .voice-btn.active {
   background: var(--accent-dim);
   color: var(--accent);
-  border-color: rgba(74, 144, 217, 0.35);
+  border-color: rgba(4, 197, 80, 0.35);
 }
 .voice-btn.add-custom {
   border-style: dashed;
@@ -347,7 +347,7 @@ button.small { padding: 5px 11px; font-size: 11px; }
   background: var(--bg);
 }
 .reply-card.drafted { background: rgba(63, 185, 80, 0.03); }
-.reply-card.posted  { background: rgba(74, 144, 217, 0.03); }
+.reply-card.posted  { background: rgba(4, 197, 80, 0.03); }
 
 .card-header {
   display: flex;
@@ -421,7 +421,7 @@ button.small { padding: 5px 11px; font-size: 11px; }
 }
 .card-textarea:focus {
   border-color: var(--accent);
-  box-shadow: 0 0 0 2px rgba(74, 144, 217, 0.12);
+  box-shadow: 0 0 0 2px rgba(4, 197, 80, 0.12);
 }
 
 .card-actions { display: flex; gap: 6px; }
@@ -500,7 +500,7 @@ details#settings-section[open] > summary {
 .mode-btn.active {
   background: var(--accent-dim);
   color: var(--accent);
-  border-color: rgba(74, 144, 217, 0.35);
+  border-color: rgba(4, 197, 80, 0.35);
 }
 
 /* ── Generate buttons row ── */
@@ -554,7 +554,7 @@ input[type="number"]:focus,
 select:focus,
 textarea:focus {
   border-color: var(--accent);
-  box-shadow: 0 0 0 2px rgba(74, 144, 217, 0.12);
+  box-shadow: 0 0 0 2px rgba(4, 197, 80, 0.12);
 }
 
 input[type="password"],
