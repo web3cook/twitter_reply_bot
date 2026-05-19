@@ -1,14 +1,14 @@
-import { JonWu, Naruto, Mert, Medusa, ChainYoda } from './voices.js';
+import { Naruto, Mert, Medusa, sarcastic, intern } from './voices.js';
 
 const STORAGE_KEY    = 'xReplyBotData';
 const DRAFT_DELAY_MS = 500;
 
 const VOICES = {
-  jonwu:     { label: 'Jon Wu',    prompt: JonWu },
   naruto:    { label: 'Naruto',    prompt: Naruto },
   mert:      { label: 'Mert',      prompt: Mert },
   medusa:    { label: 'Medusa',    prompt: Medusa },
-  chainyoda: { label: 'ChainYoda', prompt: ChainYoda },
+  sarcastic: { label: 'Sarcastic', prompt: sarcastic },
+  intern:    { label: 'Intern',    prompt: intern },
 };
 
 const STATUS_LABELS = {
@@ -24,7 +24,7 @@ let xTabId           = null;
 let replyItems       = [];
 let composeInjected  = false;
 let customVoices     = [];
-let selectedVoiceKey = 'jonwu';
+let selectedVoiceKey = 'naruto';
 let loggedInUsername = null;
 
 const loginModal             = document.getElementById('login-modal');
@@ -257,9 +257,9 @@ async function fetchAndPopulateModels(apiKey, savedModelName = 'gpt-5.4') {
 function resolvePrompt() {
   if (selectedVoiceKey.startsWith('cv:')) {
     const cv = customVoices.find(v => v.id === selectedVoiceKey);
-    return cv?.prompt?.trim() || VOICES.jonwu.prompt;
+    return cv?.prompt?.trim() || VOICES.naruto.prompt;
   }
-  return VOICES[selectedVoiceKey]?.prompt || VOICES.jonwu.prompt;
+  return VOICES[selectedVoiceKey]?.prompt || VOICES.naruto.prompt;
 }
 
 async function callOpenAI(tweetText, apiKey, prompt, model) {
@@ -633,7 +633,7 @@ async function init() {
   if (displayMode === 'popup') document.body.classList.add('popup-mode');
 
   customVoices     = stored.customVoices || [];
-  selectedVoiceKey = stored.selectedVoice || 'jonwu';
+  selectedVoiceKey = stored.selectedVoice || 'naruto';
   renderVoiceButtons();
 
   await updateOpenXButton();
