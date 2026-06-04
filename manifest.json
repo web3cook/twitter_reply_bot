@@ -2,7 +2,7 @@
   "name": "brainX",
   "short_name": "brainX",
   "description": "Looks at the twitter posts and reply according to the persona created by you or already present",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "manifest_version": 3,
   "minimum_chrome_version": "116",
   "permissions": [

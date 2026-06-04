@@ -68,6 +68,10 @@
         <div id="bulk-row" class="hidden">
           <button id="btn-draft-all" disabled class="secondary small">Draft All</button>
           <button id="btn-post-all"  disabled class="secondary small">Post All</button>
+          <label class="like-label">
+            <input type="checkbox" id="like-all-checkbox" />
+            ♥ Like All
+          </label>
           <span id="draft-counter"></span>
         </div>
         <div id="clear-row" class="hidden">
@@ -88,7 +92,16 @@
         <summary>⚙ Settings</summary>
         <div id="settings-body">
           <div class="settings-row">
-            <label class="settings-label">OpenAI API Key</label>
+            <label class="settings-label">Provider</label>
+            <select id="provider-select">
+              <option value="openai">OpenAI</option>
+              <option value="deepseek">DeepSeek</option>
+              <option value="anthropic">Claude (Anthropic)</option>
+              <option value="xai">xAI (Grok)</option>
+            </select>
+          </div>
+          <div class="settings-row">
+            <label class="settings-label" id="api-key-label">API Key</label>
             <div class="settings-input-row">
               <input id="api-key-input" type="password" placeholder="sk-..." />
               <button id="btn-save-key" class="small">Save</button>
@@ -99,11 +112,6 @@
             <label class="settings-label">AI Model</label>
             <select id="model-select">
               <option value="gpt-5.4">gpt-5.4 (default)</option>
-              <option value="gpt-4o">gpt-4o</option>
-              <option value="gpt-4o-mini">gpt-4o-mini</option>
-              <option value="gpt-4-turbo">gpt-4-turbo</option>
-              <option value="gpt-3.5-turbo">gpt-3.5-turbo</option>
-              <option value="custom">Custom…</option>
             </select>
             <input id="model-custom-input" type="text" placeholder="Enter model name" class="hidden" />
           </div>

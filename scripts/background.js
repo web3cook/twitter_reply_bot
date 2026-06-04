@@ -1,6 +1,7 @@
 chrome.runtime.onInstalled.addListener(applyStoredDisplayMode);
 chrome.runtime.onStartup.addListener(applyStoredDisplayMode);
 
+
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area === 'local' && changes.displayMode) {
     applyDisplayMode(changes.displayMode.newValue);

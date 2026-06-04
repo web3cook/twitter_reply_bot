@@ -137,6 +137,27 @@ async function postReply(tweetUrl, replyText) {
   return { success: true };
 }
 
+async function likeTweet(tweetUrl) {
+  const statusId = getStatusId(tweetUrl);
+  if (!statusId) throw new Error('Could not extract status ID from URL: ' + tweetUrl);
+
+  const article = findArticleByStatusId(statusId);
+  if (!article) throw new Error('Could not find article for status: ' + statusId);
+
+  article.scrollIntoView({ behavior: 'instant', block: 'center' });
+  await sleep(150);
+
+  // Already liked — nothing to do
+  if (article.querySelector('[data-testid="unlike"]')) return { success: true };
+
+  const likeBtn = article.querySelector('[data-testid="like"]');
+  if (!likeBtn) throw new Error('Like button not found');
+  likeBtn.click();
+  await sleep(100);
+
+  return { success: true };
+}
+
 async function saveDraft(tweetUrl, replyText) {
   await openReply(tweetUrl, replyText);
   await sleep(400);
