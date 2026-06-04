@@ -13,18 +13,21 @@ const VOICES = {
 };
 
 const STATUS_LABELS = {
-  drafted: 'drafted',
-  posted:  'posted',
-  error:   'error',
-  saving:  'saving…',
-  posting: 'posting…',
-  pending: 'pending',
+  drafted:  'drafted',
+  posted:   'posted',
+  error:    'error',
+  notfound: 'post not found',
+  saving:   'saving…',
+  posting:  'posting…',
+  pending:  'pending',
 };
 
 let xTabId           = null;
 let replyItems       = [];
 let composeInjected  = false;
 let customVoices     = [];
+let voiceOverrides   = {};
+let editingVoiceKey  = null;
 let selectedVoiceKey = 'naruto';
 let selectedProvider = 'openai';
 let autoLikeDefault  = false;
@@ -64,18 +67,32 @@ const modelCustomInput       = document.getElementById('model-custom-input');
 const modeButtonsContainer   = document.getElementById('mode-buttons');
 const modeSavedMsg           = document.getElementById('mode-saved-msg');
 const postCountInput         = document.getElementById('post-count-input');
+const postDelayInput         = document.getElementById('post-delay-input');
+const delayWarning           = document.getElementById('delay-warning');
 const voiceButtonsContainer  = document.getElementById('voice-buttons');
 const customVoiceScreen      = document.getElementById('custom-voice-screen');
-const btnBack                = document.getElementById('btn-back');
-const customVoiceNameInput   = document.getElementById('custom-voice-name');
-const customVoicePromptInput = document.getElementById('custom-voice-prompt');
-const btnSaveVoice           = document.getElementById('btn-save-voice');
-const voiceSavedMsg          = document.getElementById('voice-saved-msg');
+const btnBack                 = document.getElementById('btn-back');
+const customVoiceScreenTitle  = document.getElementById('custom-voice-screen-title');
+const customVoiceNameInput    = document.getElementById('custom-voice-name');
+const customVoicePromptInput  = document.getElementById('custom-voice-prompt');
+const btnSaveVoice            = document.getElementById('btn-save-voice');
+const btnResetVoice           = document.getElementById('btn-reset-voice');
+const voiceSavedMsg           = document.getElementById('voice-saved-msg');
 const savedVoicesSection     = document.getElementById('saved-voices-section');
 const savedVoicesList        = document.getElementById('saved-voices-list');
 
 function sleep(ms) {
   return new Promise(r => setTimeout(r, ms));
+}
+
+function getPostDelayMs() {
+  const secs = parseFloat(postDelayInput.value) || 0;
+  return Math.max(200, secs * 1000);
+}
+
+function updateDelayWarning() {
+  const secs = parseFloat(postDelayInput.value) || 0;
+  delayWarning.classList.toggle('hidden', secs >= 30);
 }
 
 function flashMessage(el) {
@@ -183,11 +200,41 @@ function renderSavedVoicesList() {
 }
 
 function showCustomVoiceScreen() {
+  editingVoiceKey               = null;
+  customVoiceScreenTitle.textContent = 'Custom Voice';
+  btnSaveVoice.textContent      = 'Save Voice';
+  customVoiceNameInput.value    = '';
+  customVoiceNameInput.readOnly = false;
+  customVoicePromptInput.value  = '';
+  btnResetVoice.classList.add('hidden');
   renderSavedVoicesList();
   customVoiceScreen.classList.remove('hidden');
 }
 
+function showEditVoiceScreen(voiceKey) {
+  editingVoiceKey               = voiceKey;
+  customVoiceScreenTitle.textContent = 'Edit Voice';
+  btnSaveVoice.textContent      = 'Save Changes';
+  savedVoicesSection.classList.add('hidden');
+
+  if (voiceKey.startsWith('cv:')) {
+    const cv = customVoices.find(v => v.id === voiceKey);
+    customVoiceNameInput.value    = cv?.name || '';
+    customVoiceNameInput.readOnly = false;
+    customVoicePromptInput.value  = cv?.prompt || '';
+    btnResetVoice.classList.add('hidden');
+  } else {
+    const voice = VOICES[voiceKey];
+    customVoiceNameInput.value    = voice.label;
+    customVoiceNameInput.readOnly = true;
+    customVoicePromptInput.value  = voiceOverrides[voiceKey] || voice.prompt;
+    btnResetVoice.classList.remove('hidden');
+  }
+  customVoiceScreen.classList.remove('hidden');
+}
+
 function hideCustomVoiceScreen() {
+  editingVoiceKey = null;
   customVoiceScreen.classList.add('hidden');
 }
 
@@ -342,7 +389,7 @@ function resolvePrompt() {
     const cv = customVoices.find(v => v.id === selectedVoiceKey);
     return cv?.prompt?.trim() || VOICES.naruto.prompt;
   }
-  return VOICES[selectedVoiceKey]?.prompt || VOICES.naruto.prompt;
+  return voiceOverrides[selectedVoiceKey] || VOICES[selectedVoiceKey]?.prompt || VOICES.naruto.prompt;
 }
 
 function updateDraftCounter() {
@@ -501,7 +548,7 @@ async function executeCompose(idx, pageFn, pendingStatus, doneStatus) {
     await saveItems();
   } catch (err) {
     console.error(`${doneStatus} error:`, err);
-    updateCardStatus(idx, 'error');
+    updateCardStatus(idx, err.message === 'post not found' ? 'notfound' : 'error');
   }
 }
 
@@ -534,7 +581,7 @@ async function postSingleReply(idx) {
     await saveItems();
   } catch (err) {
     console.error('Post error:', err);
-    updateCardStatus(idx, 'error');
+    updateCardStatus(idx, err.message === 'post not found' ? 'notfound' : 'error');
   }
 }
 
@@ -580,6 +627,13 @@ async function processPostsToReplies(posts, apiKey) {
       try {
         reply = await callLLM(post.tweetText, apiKey, prompt, model, provider);
       } catch (err) {
+        if (err.message === 'RECHARGE_REQUIRED') {
+          progressRow.classList.add('hidden');
+          alert(`Your ${PROVIDERS[provider].name} API key has run out of credits.\n\nPlease recharge your account and try again.`);
+          await saveItems();
+          updateDraftCounter();
+          return false;
+        }
         status = 'error';
         console.error('LLM error for', post.tweetUrl, err);
       }
@@ -662,13 +716,33 @@ async function generateCurrentReplies() {
   btnReplyCurrent.textContent = 'Reply Current';
 }
 
+async function scrollToFirstPending() {
+  const first = replyItems.find(i => i.status === 'pending');
+  if (!first || !await ensureXTab()) return;
+  const statusId = first.post.tweetUrl.match(/\/status\/(\d+)/)?.[1];
+  if (!statusId) return;
+  await callPageFn(xTabId, (sid) => {
+    const articles = document.querySelectorAll('article[data-testid="tweet"]');
+    for (const a of articles) {
+      if (a.querySelector(`a[href*="/status/${sid}"]`)) {
+        a.scrollIntoView({ behavior: 'instant', block: 'center' });
+        return;
+      }
+    }
+    // Tweet virtualized out of DOM — scroll to top so it re-renders
+    window.scrollTo({ top: 0, behavior: 'instant' });
+  }, [statusId]);
+  await sleep(600);
+}
+
 async function draftAll() {
   btnDraftAll.disabled = true;
   btnPostAll.disabled  = true;
+  await scrollToFirstPending();
   for (let i = 0; i < replyItems.length; i++) {
     if (replyItems[i].status !== 'pending') continue;
     await saveSingleDraft(i);
-    await sleep(DRAFT_DELAY_MS);
+    await sleep(getPostDelayMs());
   }
   btnDraftAll.disabled = false;
   btnPostAll.disabled  = false;
@@ -678,10 +752,11 @@ async function draftAll() {
 async function postAll() {
   btnDraftAll.disabled = true;
   btnPostAll.disabled  = true;
+  await scrollToFirstPending();
   for (let i = 0; i < replyItems.length; i++) {
     if (replyItems[i].status !== 'pending') continue;
     await postSingleReply(i);
-    await sleep(DRAFT_DELAY_MS);
+    await sleep(getPostDelayMs());
   }
   btnDraftAll.disabled = false;
   btnPostAll.disabled  = false;
@@ -702,8 +777,8 @@ async function clearExtensionData() {
 async function init() {
   const stored = await chrome.storage.local.get([
     'openaiApiKey', 'deepseekApiKey', 'anthropicApiKey', 'xaiApiKey',
-    'selectedProvider', 'selectedVoice', 'customVoices', 'displayMode', 'selectedModel',
-    'autoLikeEnabled',
+    'selectedProvider', 'selectedVoice', 'customVoices', 'voiceOverrides',
+    'displayMode', 'selectedModel', 'autoLikeEnabled', 'postDelay',
   ]);
 
   selectedProvider     = stored.selectedProvider || 'openai';
@@ -718,7 +793,11 @@ async function init() {
   autoLikeDefault = stored.autoLikeEnabled || false;
   updateGlobalLikeToggle();
 
-  customVoices     = stored.customVoices || [];
+  if (stored.postDelay != null) postDelayInput.value = stored.postDelay;
+  updateDelayWarning();
+
+  customVoices     = stored.customVoices  || [];
+  voiceOverrides   = stored.voiceOverrides || {};
   selectedVoiceKey = stored.selectedVoice || 'naruto';
   renderVoiceButtons();
 
@@ -799,12 +878,44 @@ async function init() {
     renderVoiceButtons();
   });
 
+  voiceButtonsContainer.addEventListener('dblclick', (e) => {
+    const btn = e.target.closest('.voice-btn');
+    if (!btn || btn.dataset.voice === '__add__') return;
+    showEditVoiceScreen(btn.dataset.voice);
+  });
+
   btnBack.addEventListener('click', hideCustomVoiceScreen);
 
   btnSaveVoice.addEventListener('click', async () => {
-    const name   = customVoiceNameInput.value.trim();
     const prompt = customVoicePromptInput.value.trim();
-    if (!name || !prompt) return;
+    if (!prompt) return;
+
+    if (editingVoiceKey !== null) {
+      // ── Edit mode ──────────────────────────────────────────────────────────
+      if (editingVoiceKey.startsWith('cv:')) {
+        const cv = customVoices.find(v => v.id === editingVoiceKey);
+        if (cv) {
+          const name = customVoiceNameInput.value.trim();
+          if (name) cv.name = name;
+          cv.prompt = prompt;
+        }
+        await chrome.storage.local.set({ customVoices });
+      } else {
+        if (prompt === VOICES[editingVoiceKey]?.prompt) {
+          delete voiceOverrides[editingVoiceKey];
+        } else {
+          voiceOverrides[editingVoiceKey] = prompt;
+        }
+        await chrome.storage.local.set({ voiceOverrides });
+      }
+      flashMessage(voiceSavedMsg);
+      setTimeout(() => { hideCustomVoiceScreen(); renderVoiceButtons(); }, 1000);
+      return;
+    }
+
+    // ── Create mode ────────────────────────────────────────────────────────
+    const name = customVoiceNameInput.value.trim();
+    if (!name) return;
 
     const newVoice = { id: `cv:${Date.now()}`, name, prompt };
     customVoices.push(newVoice);
@@ -816,10 +927,15 @@ async function init() {
 
     flashMessage(voiceSavedMsg);
     renderSavedVoicesList();
-    setTimeout(() => {
-      hideCustomVoiceScreen();
-      renderVoiceButtons();
-    }, 1000);
+    setTimeout(() => { hideCustomVoiceScreen(); renderVoiceButtons(); }, 1000);
+  });
+
+  btnResetVoice.addEventListener('click', async () => {
+    if (!editingVoiceKey || editingVoiceKey.startsWith('cv:')) return;
+    delete voiceOverrides[editingVoiceKey];
+    await chrome.storage.local.set({ voiceOverrides });
+    customVoicePromptInput.value = VOICES[editingVoiceKey].prompt;
+    flashMessage(voiceSavedMsg);
   });
 
   savedVoicesList.addEventListener('click', async (e) => {
@@ -887,6 +1003,13 @@ async function init() {
     if (val) await chrome.storage.local.set({ selectedModel: val });
   });
 
+  postDelayInput.addEventListener('change', async () => {
+    const val = parseFloat(postDelayInput.value) || 0;
+    postDelayInput.value = Math.max(0, val);
+    updateDelayWarning();
+    await chrome.storage.local.set({ postDelay: postDelayInput.value });
+  });
+
   modeButtonsContainer.addEventListener('click', async (e) => {
     const btn = e.target.closest('.mode-btn');
     if (!btn) return;
@@ -895,6 +1018,12 @@ async function init() {
     document.body.classList.toggle('popup-mode', mode === 'popup');
     renderModeButtons(mode);
     flashMessage(modeSavedMsg);
+  });
+
+  cardsSection.addEventListener('input', (e) => {
+    if (!e.target.classList.contains('card-textarea')) return;
+    const idx = parseInt(e.target.closest('.reply-card')?.dataset.idx, 10);
+    if (!isNaN(idx) && replyItems[idx]) replyItems[idx].reply = e.target.value;
   });
 
   cardsSection.addEventListener('change', async (e) => {

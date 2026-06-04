@@ -61,6 +61,13 @@
           <label class="post-count-label">Posts to reply</label>
           <input id="post-count-input" type="number" min="1" max="500" value="10" />
         </div>
+        <div class="post-count-row">
+          <label class="post-count-label">Delay between posts (s)</label>
+          <input id="post-delay-input" type="number" min="0" max="300" value="30" step="1" />
+        </div>
+        <div id="delay-warning" class="delay-warning hidden">
+          ⚠ Short delay may flag your account as spam. Recommended ≥ 30s
+        </div>
         <div class="generate-row">
           <button id="btn-generate">Generate Replies</button>
           <button id="btn-reply-current">Reply Current</button>
@@ -130,7 +137,7 @@
 
       <div class="screen-header">
         <button id="btn-back" class="btn-back">← Back</button>
-        <span class="screen-title">Custom Voice</span>
+        <span id="custom-voice-screen-title" class="screen-title">Custom Voice</span>
       </div>
 
       <div class="screen-body">
@@ -144,6 +151,7 @@
             placeholder="You are replying to X/Twitter posts as [name]. Your tone is..."></textarea>
         </div>
         <button id="btn-save-voice" class="full-width">Save Voice</button>
+        <button id="btn-reset-voice" class="full-width secondary hidden">Reset to Default</button>
         <span id="voice-saved-msg" class="hidden saved-confirm">Voice saved!</span>
 
         <div id="saved-voices-section" class="hidden">

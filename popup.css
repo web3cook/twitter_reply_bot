@@ -411,11 +411,12 @@ button.small { padding: 5px 11px; font-size: 11px; }
   letter-spacing: 0.5px;
   color: var(--text-3);
 }
-.card-status.drafted  { color: var(--success); }
-.card-status.posted   { color: var(--accent); }
-.card-status.error    { color: var(--error); }
+.card-status.drafted   { color: var(--success); }
+.card-status.posted    { color: var(--accent); }
+.card-status.error     { color: var(--error); }
+.card-status.notfound  { color: var(--warning); }
 .card-status.saving,
-.card-status.posting  { color: var(--warning); }
+.card-status.posting   { color: var(--warning); }
 
 .card-tweet {
   font-size: 11px;
@@ -550,10 +551,17 @@ details#settings-section[open] > summary {
   color: var(--text-2);
 }
 
-#post-count-input {
+#post-count-input, #post-delay-input {
   width: 62px;
   text-align: center;
   padding: 5px 8px;
+}
+
+.delay-warning {
+  font-size: 10.5px;
+  color: var(--warning);
+  line-height: 1.45;
+  padding: 4px 0 2px;
 }
 
 /* ── Form controls ── */
@@ -694,6 +702,12 @@ textarea {
 .saved-voice-name {
   font-size: 12px;
   color: var(--text);
+}
+
+input[readonly] {
+  background: var(--surface-2);
+  color: var(--text-2);
+  cursor: default;
 }
 
 .saved-confirm {

@@ -60,6 +60,19 @@ export function supportsTemperature(model) {
   return !NO_TEMPERATURE_MODELS.some(m => model === m || model.startsWith(m + '-'));
 }
 
+function isBillingError(status, errData) {
+  if (status === 402) return true;
+  const code = errData?.error?.code || '';
+  const msg  = (errData?.error?.message || errData?.message || '').toLowerCase();
+  return code === 'insufficient_quota' ||
+    msg.includes('insufficient') ||
+    msg.includes('quota') ||
+    msg.includes('billing') ||
+    msg.includes('credit') ||
+    msg.includes('balance') ||
+    msg.includes('payment');
+}
+
 export async function callLLM(tweetText, apiKey, prompt, model, provider) {
   const resolvedModel = model || PROVIDERS[provider]?.defaultModel || 'gpt-5.4';
 
@@ -83,6 +96,7 @@ export async function callLLM(tweetText, apiKey, prompt, model, provider) {
     });
     if (!resp.ok) {
       const err = await resp.json().catch(() => ({}));
+      if (isBillingError(resp.status, err)) throw new Error('RECHARGE_REQUIRED');
       throw new Error(err?.error?.message || `Anthropic error ${resp.status}`);
     }
     const data = await resp.json();
@@ -109,6 +123,7 @@ export async function callLLM(tweetText, apiKey, prompt, model, provider) {
     });
     if (!resp.ok) {
       const err = await resp.json().catch(() => ({}));
+      if (isBillingError(resp.status, err)) throw new Error('RECHARGE_REQUIRED');
       throw new Error(err?.error?.message || `${PROVIDERS[provider].name} error ${resp.status}`);
     }
     const data = await resp.json();
@@ -133,6 +148,7 @@ export async function callLLM(tweetText, apiKey, prompt, model, provider) {
   });
   if (!resp.ok) {
     const err = await resp.json().catch(() => ({}));
+    if (isBillingError(resp.status, err)) throw new Error('RECHARGE_REQUIRED');
     throw new Error(err?.error?.message || `OpenAI error ${resp.status}`);
   }
   const data = await resp.json();
