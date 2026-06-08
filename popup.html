@@ -61,6 +61,13 @@
           <label class="post-count-label">Posts to reply</label>
           <input id="post-count-input" type="number" min="1" max="500" value="10" />
         </div>
+        <div class="post-count-row">
+          <label class="post-count-label">Delay between posts (s)</label>
+          <input id="post-delay-input" type="number" min="0" max="300" value="30" step="1" />
+        </div>
+        <div id="delay-warning" class="delay-warning hidden">
+          ⚠ Short delay may flag your account as spam. Recommended ≥ 30s
+        </div>
         <div class="generate-row">
           <button id="btn-generate">Generate Replies</button>
           <button id="btn-reply-current">Reply Current</button>
@@ -68,6 +75,10 @@
         <div id="bulk-row" class="hidden">
           <button id="btn-draft-all" disabled class="secondary small">Draft All</button>
           <button id="btn-post-all"  disabled class="secondary small">Post All</button>
+          <label class="like-label">
+            <input type="checkbox" id="like-all-checkbox" />
+            ♥ Like All
+          </label>
           <span id="draft-counter"></span>
         </div>
         <div id="clear-row" class="hidden">
@@ -88,7 +99,16 @@
         <summary>⚙ Settings</summary>
         <div id="settings-body">
           <div class="settings-row">
-            <label class="settings-label">OpenAI API Key</label>
+            <label class="settings-label">Provider</label>
+            <select id="provider-select">
+              <option value="openai">OpenAI</option>
+              <option value="deepseek">DeepSeek</option>
+              <option value="anthropic">Claude (Anthropic)</option>
+              <option value="xai">xAI (Grok)</option>
+            </select>
+          </div>
+          <div class="settings-row">
+            <label class="settings-label" id="api-key-label">API Key</label>
             <div class="settings-input-row">
               <input id="api-key-input" type="password" placeholder="sk-..." />
               <button id="btn-save-key" class="small">Save</button>
@@ -99,11 +119,6 @@
             <label class="settings-label">AI Model</label>
             <select id="model-select">
               <option value="gpt-5.4">gpt-5.4 (default)</option>
-              <option value="gpt-4o">gpt-4o</option>
-              <option value="gpt-4o-mini">gpt-4o-mini</option>
-              <option value="gpt-4-turbo">gpt-4-turbo</option>
-              <option value="gpt-3.5-turbo">gpt-3.5-turbo</option>
-              <option value="custom">Custom…</option>
             </select>
             <input id="model-custom-input" type="text" placeholder="Enter model name" class="hidden" />
           </div>
@@ -122,7 +137,7 @@
 
       <div class="screen-header">
         <button id="btn-back" class="btn-back">← Back</button>
-        <span class="screen-title">Custom Voice</span>
+        <span id="custom-voice-screen-title" class="screen-title">Custom Voice</span>
       </div>
 
       <div class="screen-body">
@@ -136,6 +151,7 @@
             placeholder="You are replying to X/Twitter posts as [name]. Your tone is..."></textarea>
         </div>
         <button id="btn-save-voice" class="full-width">Save Voice</button>
+        <button id="btn-reset-voice" class="full-width secondary hidden">Reset to Default</button>
         <span id="voice-saved-msg" class="hidden saved-confirm">Voice saved!</span>
 
         <div id="saved-voices-section" class="hidden">

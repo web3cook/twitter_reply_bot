@@ -52,7 +52,7 @@ body {
   flex-direction: column;
   flex: 1;
   min-height: 0;
-  overflow: hidden;
+  overflow-y: auto;
 }
 
 .hidden { display: none !important; }
@@ -214,6 +214,32 @@ button.posted {
   cursor: default;
 }
 
+.like-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--text-2);
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+
+.like-label input[type="checkbox"] {
+  accent-color: #f91880;
+  width: 13px;
+  height: 13px;
+  cursor: pointer;
+  flex-shrink: 0;
+  margin: 0;
+}
+
+.like-label input[type="checkbox"]:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
 button.danger {
   background: var(--error-dim);
   color: var(--error);
@@ -330,13 +356,11 @@ button.small { padding: 5px 11px; font-size: 11px; }
 /* ── Cards ── */
 #cards-section {
   flex: 1;
-  overflow-y: auto;
-  min-height: 0;
 }
 
-#cards-section::-webkit-scrollbar { width: 4px; }
-#cards-section::-webkit-scrollbar-track { background: transparent; }
-#cards-section::-webkit-scrollbar-thumb {
+#main-screen::-webkit-scrollbar { width: 4px; }
+#main-screen::-webkit-scrollbar-track { background: transparent; }
+#main-screen::-webkit-scrollbar-thumb {
   background: var(--border);
   border-radius: 99px;
 }
@@ -387,11 +411,12 @@ button.small { padding: 5px 11px; font-size: 11px; }
   letter-spacing: 0.5px;
   color: var(--text-3);
 }
-.card-status.drafted  { color: var(--success); }
-.card-status.posted   { color: var(--accent); }
-.card-status.error    { color: var(--error); }
+.card-status.drafted   { color: var(--success); }
+.card-status.posted    { color: var(--accent); }
+.card-status.error     { color: var(--error); }
+.card-status.notfound  { color: var(--warning); }
 .card-status.saving,
-.card-status.posting  { color: var(--warning); }
+.card-status.posting   { color: var(--warning); }
 
 .card-tweet {
   font-size: 11px;
@@ -526,10 +551,17 @@ details#settings-section[open] > summary {
   color: var(--text-2);
 }
 
-#post-count-input {
+#post-count-input, #post-delay-input {
   width: 62px;
   text-align: center;
   padding: 5px 8px;
+}
+
+.delay-warning {
+  font-size: 10.5px;
+  color: var(--warning);
+  line-height: 1.45;
+  padding: 4px 0 2px;
 }
 
 /* ── Form controls ── */
@@ -670,6 +702,12 @@ textarea {
 .saved-voice-name {
   font-size: 12px;
   color: var(--text);
+}
+
+input[readonly] {
+  background: var(--surface-2);
+  color: var(--text-2);
+  cursor: default;
 }
 
 .saved-confirm {

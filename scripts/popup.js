@@ -1,7 +1,8 @@
 import { Naruto, Mert, Medusa, sarcastic, intern } from './voices.js';
+import { PROVIDERS, callLLM } from './models.js';
 
 const STORAGE_KEY    = 'xReplyBotData';
-const DRAFT_DELAY_MS = 500;
+const DRAFT_DELAY_MS = 200;
 
 const VOICES = {
   naruto:    { label: 'Naruto',    prompt: Naruto },
@@ -12,19 +13,24 @@ const VOICES = {
 };
 
 const STATUS_LABELS = {
-  drafted: 'drafted',
-  posted:  'posted',
-  error:   'error',
-  saving:  'saving…',
-  posting: 'posting…',
-  pending: 'pending',
+  drafted:  'drafted',
+  posted:   'posted',
+  error:    'error',
+  notfound: 'post not found',
+  saving:   'saving…',
+  posting:  'posting…',
+  pending:  'pending',
 };
 
 let xTabId           = null;
 let replyItems       = [];
 let composeInjected  = false;
 let customVoices     = [];
+let voiceOverrides   = {};
+let editingVoiceKey  = null;
 let selectedVoiceKey = 'naruto';
+let selectedProvider = 'openai';
+let autoLikeDefault  = false;
 let loggedInUsername = null;
 
 const loginModal             = document.getElementById('login-modal');
@@ -42,6 +48,7 @@ const btnReplyCurrent        = document.getElementById('btn-reply-current');
 const bulkRow                = document.getElementById('bulk-row');
 const btnDraftAll            = document.getElementById('btn-draft-all');
 const btnPostAll             = document.getElementById('btn-post-all');
+const likeAllCheckbox        = document.getElementById('like-all-checkbox');
 const clearRow               = document.getElementById('clear-row');
 const btnClearData           = document.getElementById('btn-clear-data');
 const clearMsg               = document.getElementById('clear-msg');
@@ -50,6 +57,8 @@ const progressRow            = document.getElementById('progress-row');
 const progressText           = document.getElementById('progress-text');
 const progressBar            = document.getElementById('progress-bar');
 const cardsSection           = document.getElementById('cards-section');
+const providerSelect         = document.getElementById('provider-select');
+const apiKeyLabel            = document.getElementById('api-key-label');
 const apiKeyInput            = document.getElementById('api-key-input');
 const btnSaveKey             = document.getElementById('btn-save-key');
 const keySavedMsg            = document.getElementById('key-saved-msg');
@@ -58,18 +67,32 @@ const modelCustomInput       = document.getElementById('model-custom-input');
 const modeButtonsContainer   = document.getElementById('mode-buttons');
 const modeSavedMsg           = document.getElementById('mode-saved-msg');
 const postCountInput         = document.getElementById('post-count-input');
+const postDelayInput         = document.getElementById('post-delay-input');
+const delayWarning           = document.getElementById('delay-warning');
 const voiceButtonsContainer  = document.getElementById('voice-buttons');
 const customVoiceScreen      = document.getElementById('custom-voice-screen');
-const btnBack                = document.getElementById('btn-back');
-const customVoiceNameInput   = document.getElementById('custom-voice-name');
-const customVoicePromptInput = document.getElementById('custom-voice-prompt');
-const btnSaveVoice           = document.getElementById('btn-save-voice');
-const voiceSavedMsg          = document.getElementById('voice-saved-msg');
+const btnBack                 = document.getElementById('btn-back');
+const customVoiceScreenTitle  = document.getElementById('custom-voice-screen-title');
+const customVoiceNameInput    = document.getElementById('custom-voice-name');
+const customVoicePromptInput  = document.getElementById('custom-voice-prompt');
+const btnSaveVoice            = document.getElementById('btn-save-voice');
+const btnResetVoice           = document.getElementById('btn-reset-voice');
+const voiceSavedMsg           = document.getElementById('voice-saved-msg');
 const savedVoicesSection     = document.getElementById('saved-voices-section');
 const savedVoicesList        = document.getElementById('saved-voices-list');
 
 function sleep(ms) {
   return new Promise(r => setTimeout(r, ms));
+}
+
+function getPostDelayMs() {
+  const secs = parseFloat(postDelayInput.value) || 0;
+  return Math.max(200, secs * 1000);
+}
+
+function updateDelayWarning() {
+  const secs = parseFloat(postDelayInput.value) || 0;
+  delayWarning.classList.toggle('hidden', secs >= 30);
 }
 
 function flashMessage(el) {
@@ -111,8 +134,7 @@ async function focusOrOpenXTab() {
 
 async function updateOpenXButton() {
   const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  const isXActive = activeTab?.url?.startsWith('https://x.com') ||
-                    false;
+  const isXActive = activeTab?.url?.startsWith('https://x.com') || false;
   if (isXActive) {
     btnOpenX.classList.add('secondary');
     btnOpenX.textContent = 'X Open';
@@ -178,113 +200,144 @@ function renderSavedVoicesList() {
 }
 
 function showCustomVoiceScreen() {
+  editingVoiceKey               = null;
+  customVoiceScreenTitle.textContent = 'Custom Voice';
+  btnSaveVoice.textContent      = 'Save Voice';
+  customVoiceNameInput.value    = '';
+  customVoiceNameInput.readOnly = false;
+  customVoicePromptInput.value  = '';
+  btnResetVoice.classList.add('hidden');
   renderSavedVoicesList();
   customVoiceScreen.classList.remove('hidden');
 }
 
+function showEditVoiceScreen(voiceKey) {
+  editingVoiceKey               = voiceKey;
+  customVoiceScreenTitle.textContent = 'Edit Voice';
+  btnSaveVoice.textContent      = 'Save Changes';
+  savedVoicesSection.classList.add('hidden');
+
+  if (voiceKey.startsWith('cv:')) {
+    const cv = customVoices.find(v => v.id === voiceKey);
+    customVoiceNameInput.value    = cv?.name || '';
+    customVoiceNameInput.readOnly = false;
+    customVoicePromptInput.value  = cv?.prompt || '';
+    btnResetVoice.classList.add('hidden');
+  } else {
+    const voice = VOICES[voiceKey];
+    customVoiceNameInput.value    = voice.label;
+    customVoiceNameInput.readOnly = true;
+    customVoicePromptInput.value  = voiceOverrides[voiceKey] || voice.prompt;
+    btnResetVoice.classList.remove('hidden');
+  }
+  customVoiceScreen.classList.remove('hidden');
+}
+
 function hideCustomVoiceScreen() {
+  editingVoiceKey = null;
   customVoiceScreen.classList.add('hidden');
+}
+
+// ── Provider / model helpers ──────────────────────────────────────────────────
+
+function populateModelsForProvider(provider, savedModel) {
+  const p = PROVIDERS[provider];
+  const target = savedModel || p.defaultModel;
+
+  modelSelect.innerHTML = '';
+  p.models.forEach(({ id, label }) => {
+    const opt = document.createElement('option');
+    opt.value = id;
+    opt.textContent = label;
+    modelSelect.appendChild(opt);
+  });
+
+  const customOpt = document.createElement('option');
+  customOpt.value = 'custom';
+  customOpt.textContent = 'Custom…';
+  modelSelect.appendChild(customOpt);
+
+  const knownIds = p.models.map(m => m.id);
+  if (knownIds.includes(target)) {
+    modelSelect.value = target;
+    modelCustomInput.classList.add('hidden');
+  } else {
+    modelSelect.value      = 'custom';
+    modelCustomInput.value = target;
+    modelCustomInput.classList.remove('hidden');
+  }
+}
+
+async function fetchModelsForProvider(provider, apiKey) {
+  if (!apiKey || provider === 'anthropic') return null;
+
+  const urls = {
+    openai:   'https://api.openai.com/v1/models',
+    deepseek: 'https://api.deepseek.com/models',
+    xai:      'https://api.x.ai/v1/models',
+  };
+  const url = urls[provider];
+  if (!url) return null;
+
+  const resp = await fetch(url, { headers: { 'Authorization': `Bearer ${apiKey}` } });
+  if (!resp.ok) return null;
+  const { data } = await resp.json();
+  if (!Array.isArray(data) || data.length === 0) return null;
+
+  let models = data.sort((a, b) => (b.created || 0) - (a.created || 0));
+  if (provider === 'openai') {
+    models = models.filter(m => /^(gpt-|o\d|chatgpt-)/.test(m.id));
+  }
+  return models.map(m => m.id);
+}
+
+function applyLiveModelIds(ids, target, provider) {
+  const resolved = target || PROVIDERS[provider].defaultModel;
+  modelSelect.innerHTML = '';
+  ids.forEach(id => {
+    const opt = document.createElement('option');
+    opt.value = id;
+    opt.textContent = id;
+    modelSelect.appendChild(opt);
+  });
+  const customOpt = document.createElement('option');
+  customOpt.value = 'custom';
+  customOpt.textContent = 'Custom…';
+  modelSelect.appendChild(customOpt);
+
+  if (ids.includes(resolved)) {
+    modelSelect.value = resolved;
+    modelCustomInput.classList.add('hidden');
+  } else {
+    modelSelect.value      = 'custom';
+    modelCustomInput.value = resolved;
+    modelCustomInput.classList.remove('hidden');
+  }
+}
+
+// Show static list immediately, then swap in live models in the background
+function loadModels(provider, apiKey, savedModel) {
+  populateModelsForProvider(provider, savedModel);
+  fetchModelsForProvider(provider, apiKey)
+    .then(ids => { if (ids) applyLiveModelIds(ids, savedModel || modelSelect.value, provider); })
+    .catch(() => {});
+}
+
+function updateProviderUI(provider, apiKeyValue) {
+  const p = PROVIDERS[provider];
+  apiKeyLabel.textContent  = p.keyLabel;
+  apiKeyInput.placeholder  = p.keyPlaceholder;
+  apiKeyInput.value        = apiKeyValue || '';
 }
 
 function getSelectedModel() {
   if (modelSelect.value === 'custom') {
-    return modelCustomInput.value.trim() || 'gpt-5.4';
+    return modelCustomInput.value.trim() || PROVIDERS[selectedProvider].defaultModel;
   }
-  return modelSelect.value || 'gpt-5.4';
+  return modelSelect.value || PROVIDERS[selectedProvider].defaultModel;
 }
 
-async function fetchAndPopulateModels(apiKey, savedModelName = 'gpt-5.4') {
-  if (!apiKey) return;
-
-  modelSelect.innerHTML = '<option disabled selected>Loading models…</option>';
-  modelSelect.disabled  = true;
-
-  try {
-    const resp = await fetch('https://api.openai.com/v1/models', {
-      headers: { 'Authorization': `Bearer ${apiKey}` },
-    });
-    if (!resp.ok) throw new Error(`${resp.status}`);
-    const { data } = await resp.json();
-
-    const ids = data
-      .filter(m => /^(gpt-|o\d|chatgpt-)/.test(m.id))
-      .sort((a, b) => b.created - a.created)
-      .map(m => m.id);
-
-    modelSelect.innerHTML = '';
-    modelSelect.disabled  = false;
-    ids.forEach(id => {
-      const opt = document.createElement('option');
-      opt.value = id;
-      opt.textContent = id;
-      modelSelect.appendChild(opt);
-    });
-
-    const customOpt = document.createElement('option');
-    customOpt.value = 'custom';
-    customOpt.textContent = 'Custom…';
-    modelSelect.appendChild(customOpt);
-
-    if (ids.includes(savedModelName)) {
-      modelSelect.value = savedModelName;
-      modelCustomInput.classList.add('hidden');
-    } else {
-      modelSelect.value         = 'custom';
-      modelCustomInput.value    = savedModelName;
-      modelCustomInput.classList.remove('hidden');
-    }
-  } catch {
-    modelSelect.disabled  = false;
-    modelSelect.innerHTML = `
-      <option value="gpt-5.4">gpt-5.4 (default)</option>
-      <option value="gpt-4o">gpt-4o</option>
-      <option value="gpt-4o-mini">gpt-4o-mini</option>
-      <option value="gpt-4-turbo">gpt-4-turbo</option>
-      <option value="gpt-3.5-turbo">gpt-3.5-turbo</option>
-      <option value="custom">Custom…</option>
-    `;
-    const fallbacks = ['gpt-5.4', 'gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo', 'gpt-3.5-turbo'];
-    if (fallbacks.includes(savedModelName)) {
-      modelSelect.value = savedModelName;
-    } else {
-      modelSelect.value      = 'custom';
-      modelCustomInput.value = savedModelName;
-      modelCustomInput.classList.remove('hidden');
-    }
-  }
-}
-
-function resolvePrompt() {
-  if (selectedVoiceKey.startsWith('cv:')) {
-    const cv = customVoices.find(v => v.id === selectedVoiceKey);
-    return cv?.prompt?.trim() || VOICES.naruto.prompt;
-  }
-  return VOICES[selectedVoiceKey]?.prompt || VOICES.naruto.prompt;
-}
-
-async function callOpenAI(tweetText, apiKey, prompt, model) {
-  const resp = await fetch('https://api.openai.com/v1/responses', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify({
-      model: model || 'gpt-5.4',
-      max_output_tokens: 150,
-      temperature: 0.7,
-      instructions: prompt,
-      input: tweetText + ' Reply in character.',
-    }),
-  });
-
-  if (!resp.ok) {
-    const err = await resp.json().catch(() => ({}));
-    throw new Error(err?.error?.message || `OpenAI error ${resp.status}`);
-  }
-  const data = await resp.json();
-  return data.output[0].content[0].text.replace(/\n{2,}/g, '\n').trim();
-}
+// ── Page script helpers ───────────────────────────────────────────────────────
 
 async function injectFile(tabId, file) {
   await chrome.scripting.executeScript({ target: { tabId }, files: [file] });
@@ -318,13 +371,25 @@ async function saveItems() {
 
 async function loadItems() {
   const data = await chrome.storage.local.get(STORAGE_KEY);
-  replyItems = data[STORAGE_KEY] || [];
+  replyItems = (data[STORAGE_KEY] || []).map(item => ({
+    liked: false, autoLike: false, ...item,
+  }));
 }
 
 function showBanner(type, text) {
   bannerIcon.textContent = type === 'warn' ? '⚠' : 'ℹ';
   bannerText.textContent = text;
   contextBanner.className = `banner ${type}`;
+}
+
+// ── UI helpers ────────────────────────────────────────────────────────────────
+
+function resolvePrompt() {
+  if (selectedVoiceKey.startsWith('cv:')) {
+    const cv = customVoices.find(v => v.id === selectedVoiceKey);
+    return cv?.prompt?.trim() || VOICES.naruto.prompt;
+  }
+  return voiceOverrides[selectedVoiceKey] || VOICES[selectedVoiceKey]?.prompt || VOICES.naruto.prompt;
 }
 
 function updateDraftCounter() {
@@ -360,7 +425,7 @@ function renderCard(item, idx) {
   const isDone        = item.status === 'drafted' || item.status === 'posted';
   const doneClass     = item.status === 'drafted' ? ' drafted' : item.status === 'posted' ? ' posted' : '';
   const draftBtnClass = item.status === 'drafted' ? 'success' : 'secondary';
-  const postBtnClass  = item.status === 'posted'  ? 'posted'  : '';
+  const postBtnClass = item.status === 'posted' ? 'posted' : '';
 
   card.className   = 'reply-card' + doneClass;
   card.dataset.idx = idx;
@@ -376,6 +441,12 @@ function renderCard(item, idx) {
     <textarea class="card-textarea" rows="3">${escapeHtml(item.reply || '')}</textarea>
     <div class="card-actions">
       <button class="btn-open-reply secondary small" data-idx="${idx}">Open</button>
+      <label class="like-label" title="${item.liked ? 'Already liked' : 'Like when posting'}">
+        <input type="checkbox" class="like-checkbox" data-idx="${idx}"
+          ${item.autoLike || item.liked ? 'checked' : ''}
+          ${item.liked ? 'disabled' : ''} />
+        ♥ Like
+      </label>
       <button class="btn-save-draft ${draftBtnClass} small" data-idx="${idx}" ${isDone ? 'disabled' : ''}>
         ${item.status === 'drafted' ? 'Drafted ✓' : 'Save Draft'}
       </button>
@@ -385,6 +456,26 @@ function renderCard(item, idx) {
     </div>
   `;
   cardsSection.appendChild(card);
+}
+
+function updateLikeToggle(idx) {
+  const item = replyItems[idx];
+  const card = cardsSection.querySelector(`.reply-card[data-idx="${idx}"]`);
+  if (!card) return;
+  const cb = card.querySelector('.like-checkbox');
+  if (!cb) return;
+  cb.checked  = item.autoLike || item.liked;
+  cb.disabled = item.liked;
+}
+
+function updateGlobalLikeToggle() {
+  likeAllCheckbox.checked = autoLikeDefault;
+}
+
+function updateLikedStatus(idx) {
+  replyItems[idx].liked = true;
+  updateLikeToggle(idx);
+  updateDraftCounter();
 }
 
 function updateCardStatus(idx, status) {
@@ -434,6 +525,8 @@ function getCardReplyText(idx) {
   return textarea ? textarea.value.trim() : replyItems[idx].reply;
 }
 
+// ── Compose helpers ───────────────────────────────────────────────────────────
+
 async function ensureComposeInjected() {
   if (!composeInjected) {
     await injectFile(xTabId, 'scripts/page_compose.js');
@@ -455,7 +548,7 @@ async function executeCompose(idx, pageFn, pendingStatus, doneStatus) {
     await saveItems();
   } catch (err) {
     console.error(`${doneStatus} error:`, err);
-    updateCardStatus(idx, 'error');
+    updateCardStatus(idx, err.message === 'post not found' ? 'notfound' : 'error');
   }
 }
 
@@ -464,10 +557,37 @@ async function saveSingleDraft(idx) {
 }
 
 async function postSingleReply(idx) {
-  await executeCompose(idx, (url, text) => postReply(url, text), 'posting', 'posted');
+  const item      = replyItems[idx];
+  const replyText = getCardReplyText(idx);
+  if (!await ensureXTab()) return;
+
+  updateCardStatus(idx, 'posting');
+  try {
+    await ensureComposeInjected();
+
+    if (item.autoLike && !item.liked) {
+      try {
+        await callPageFn(xTabId, (url) => likeTweet(url), [item.post.tweetUrl]);
+        updateLikedStatus(idx);
+        await saveItems();
+      } catch (likeErr) {
+        console.error('Auto-like failed (continuing with post):', likeErr);
+      }
+    }
+
+    await callPageFn(xTabId, (url, text) => postReply(url, text), [item.post.tweetUrl, replyText]);
+    replyItems[idx].reply = replyText;
+    updateCardStatus(idx, 'posted');
+    await saveItems();
+  } catch (err) {
+    console.error('Post error:', err);
+    updateCardStatus(idx, err.message === 'post not found' ? 'notfound' : 'error');
+  }
 }
 
-async function processPostsToReplies(posts, openaiApiKey) {
+// ── Generate flow ─────────────────────────────────────────────────────────────
+
+async function processPostsToReplies(posts, apiKey) {
   if (loggedInUsername) {
     posts = posts.filter(p => p.username?.toLowerCase() !== loggedInUsername);
   }
@@ -477,11 +597,7 @@ async function processPostsToReplies(posts, openaiApiKey) {
     return false;
   }
 
-  const doneByUrl = new Map(
-    replyItems
-      .filter(i => i.status === 'drafted' || i.status === 'posted')
-      .map(i => [i.post.tweetUrl, i])
-  );
+  const prevByUrl = new Map(replyItems.map(i => [i.post.tweetUrl, i]));
   replyItems             = [];
   cardsSection.innerHTML = '';
   composeInjected        = false;
@@ -489,31 +605,41 @@ async function processPostsToReplies(posts, openaiApiKey) {
   progressRow.classList.remove('hidden');
   progressBar.style.width = '0%';
 
-  const prompt = resolvePrompt();
-  const model  = getSelectedModel();
+  const prompt   = resolvePrompt();
+  const model    = getSelectedModel();
+  const provider = selectedProvider;
 
   for (let i = 0; i < posts.length; i++) {
     const post = posts[i];
     progressText.textContent = `Generating ${i + 1} / ${posts.length} (@${post.username || '?'})…`;
     progressBar.style.width  = `${Math.round((i / posts.length) * 100)}%`;
 
-    let reply  = '';
-    let status = 'pending';
+    const prev     = prevByUrl.get(post.tweetUrl);
+    const liked    = prev?.liked || false;
+    const autoLike = liked ? false : (prev?.autoLike ?? autoLikeDefault);
+    let   reply    = '';
+    let   status   = 'pending';
 
-    if (doneByUrl.has(post.tweetUrl)) {
-      const prev = doneByUrl.get(post.tweetUrl);
+    if (prev && (prev.status === 'drafted' || prev.status === 'posted')) {
       reply  = prev.reply;
       status = prev.status;
     } else {
       try {
-        reply = await callOpenAI(post.tweetText, openaiApiKey, prompt, model);
+        reply = await callLLM(post.tweetText, apiKey, prompt, model, provider);
       } catch (err) {
+        if (err.message === 'RECHARGE_REQUIRED') {
+          progressRow.classList.add('hidden');
+          alert(`Your ${PROVIDERS[provider].name} API key has run out of credits.\n\nPlease recharge your account and try again.`);
+          await saveItems();
+          updateDraftCounter();
+          return false;
+        }
         status = 'error';
-        console.error('OpenAI error for', post.tweetUrl, err);
+        console.error('LLM error for', post.tweetUrl, err);
       }
     }
 
-    replyItems.push({ post, reply, status });
+    replyItems.push({ post, reply, status, liked, autoLike });
     renderCard(replyItems[replyItems.length - 1], replyItems.length - 1);
   }
 
@@ -526,9 +652,11 @@ async function processPostsToReplies(posts, openaiApiKey) {
 }
 
 async function generateReplies() {
-  const { openaiApiKey } = await chrome.storage.local.get('openaiApiKey');
-  if (!openaiApiKey) {
-    alert('Set your OpenAI API key in Settings first.');
+  const p = PROVIDERS[selectedProvider];
+  const stored = await chrome.storage.local.get(p.storageKey);
+  const apiKey = stored[p.storageKey];
+  if (!apiKey) {
+    alert(`Set your ${p.name} API key in Settings first.`);
     document.getElementById('settings-section').open = true;
     return;
   }
@@ -551,15 +679,17 @@ async function generateReplies() {
     return;
   }
 
-  await processPostsToReplies(posts, openaiApiKey);
+  await processPostsToReplies(posts, apiKey);
   btnGenerate.disabled    = false;
   btnGenerate.textContent = 'Generate Replies';
 }
 
 async function generateCurrentReplies() {
-  const { openaiApiKey } = await chrome.storage.local.get('openaiApiKey');
-  if (!openaiApiKey) {
-    alert('Set your OpenAI API key in Settings first.');
+  const p = PROVIDERS[selectedProvider];
+  const stored = await chrome.storage.local.get(p.storageKey);
+  const apiKey = stored[p.storageKey];
+  if (!apiKey) {
+    alert(`Set your ${p.name} API key in Settings first.`);
     document.getElementById('settings-section').open = true;
     return;
   }
@@ -581,18 +711,38 @@ async function generateCurrentReplies() {
     return;
   }
 
-  await processPostsToReplies(posts, openaiApiKey);
+  await processPostsToReplies(posts, apiKey);
   btnReplyCurrent.disabled    = false;
   btnReplyCurrent.textContent = 'Reply Current';
+}
+
+async function scrollToFirstPending() {
+  const first = replyItems.find(i => i.status === 'pending');
+  if (!first || !await ensureXTab()) return;
+  const statusId = first.post.tweetUrl.match(/\/status\/(\d+)/)?.[1];
+  if (!statusId) return;
+  await callPageFn(xTabId, (sid) => {
+    const articles = document.querySelectorAll('article[data-testid="tweet"]');
+    for (const a of articles) {
+      if (a.querySelector(`a[href*="/status/${sid}"]`)) {
+        a.scrollIntoView({ behavior: 'instant', block: 'center' });
+        return;
+      }
+    }
+    // Tweet virtualized out of DOM — scroll to top so it re-renders
+    window.scrollTo({ top: 0, behavior: 'instant' });
+  }, [statusId]);
+  await sleep(600);
 }
 
 async function draftAll() {
   btnDraftAll.disabled = true;
   btnPostAll.disabled  = true;
+  await scrollToFirstPending();
   for (let i = 0; i < replyItems.length; i++) {
     if (replyItems[i].status !== 'pending') continue;
     await saveSingleDraft(i);
-    await sleep(DRAFT_DELAY_MS);
+    await sleep(getPostDelayMs());
   }
   btnDraftAll.disabled = false;
   btnPostAll.disabled  = false;
@@ -602,10 +752,11 @@ async function draftAll() {
 async function postAll() {
   btnDraftAll.disabled = true;
   btnPostAll.disabled  = true;
+  await scrollToFirstPending();
   for (let i = 0; i < replyItems.length; i++) {
     if (replyItems[i].status !== 'pending') continue;
     await postSingleReply(i);
-    await sleep(DRAFT_DELAY_MS);
+    await sleep(getPostDelayMs());
   }
   btnDraftAll.disabled = false;
   btnPostAll.disabled  = false;
@@ -621,18 +772,32 @@ async function clearExtensionData() {
   updateDraftCounter();
 }
 
+// ── Init ──────────────────────────────────────────────────────────────────────
+
 async function init() {
-  const stored = await chrome.storage.local.get(['openaiApiKey', 'selectedVoice', 'customVoices', 'displayMode', 'selectedModel', 'customModel']);
+  const stored = await chrome.storage.local.get([
+    'openaiApiKey', 'deepseekApiKey', 'anthropicApiKey', 'xaiApiKey',
+    'selectedProvider', 'selectedVoice', 'customVoices', 'voiceOverrides',
+    'displayMode', 'selectedModel', 'autoLikeEnabled', 'postDelay',
+  ]);
 
-  if (stored.openaiApiKey) apiKeyInput.value = stored.openaiApiKey;
-
-  await fetchAndPopulateModels(stored.openaiApiKey, stored.selectedModel || 'gpt-5.4');
+  selectedProvider     = stored.selectedProvider || 'openai';
+  providerSelect.value = selectedProvider;
+  updateProviderUI(selectedProvider, stored[PROVIDERS[selectedProvider].storageKey]);
+  loadModels(selectedProvider, stored[PROVIDERS[selectedProvider].storageKey], stored.selectedModel);
 
   const displayMode = stored.displayMode || 'sidepanel';
   renderModeButtons(displayMode);
   if (displayMode === 'popup') document.body.classList.add('popup-mode');
 
-  customVoices     = stored.customVoices || [];
+  autoLikeDefault = stored.autoLikeEnabled || false;
+  updateGlobalLikeToggle();
+
+  if (stored.postDelay != null) postDelayInput.value = stored.postDelay;
+  updateDelayWarning();
+
+  customVoices     = stored.customVoices  || [];
+  voiceOverrides   = stored.voiceOverrides || {};
   selectedVoiceKey = stored.selectedVoice || 'naruto';
   renderVoiceButtons();
 
@@ -670,6 +835,8 @@ async function init() {
       if (replyItems.length > 0) renderCards();
     }
   }
+
+  // ── Event listeners ─────────────────────────────────────────────────────────
 
   btnOpenXLogin.addEventListener('click', focusOrOpenXTab);
   btnCheckAgain.addEventListener('click', async () => {
@@ -711,12 +878,44 @@ async function init() {
     renderVoiceButtons();
   });
 
+  voiceButtonsContainer.addEventListener('dblclick', (e) => {
+    const btn = e.target.closest('.voice-btn');
+    if (!btn || btn.dataset.voice === '__add__') return;
+    showEditVoiceScreen(btn.dataset.voice);
+  });
+
   btnBack.addEventListener('click', hideCustomVoiceScreen);
 
   btnSaveVoice.addEventListener('click', async () => {
-    const name   = customVoiceNameInput.value.trim();
     const prompt = customVoicePromptInput.value.trim();
-    if (!name || !prompt) return;
+    if (!prompt) return;
+
+    if (editingVoiceKey !== null) {
+      // ── Edit mode ──────────────────────────────────────────────────────────
+      if (editingVoiceKey.startsWith('cv:')) {
+        const cv = customVoices.find(v => v.id === editingVoiceKey);
+        if (cv) {
+          const name = customVoiceNameInput.value.trim();
+          if (name) cv.name = name;
+          cv.prompt = prompt;
+        }
+        await chrome.storage.local.set({ customVoices });
+      } else {
+        if (prompt === VOICES[editingVoiceKey]?.prompt) {
+          delete voiceOverrides[editingVoiceKey];
+        } else {
+          voiceOverrides[editingVoiceKey] = prompt;
+        }
+        await chrome.storage.local.set({ voiceOverrides });
+      }
+      flashMessage(voiceSavedMsg);
+      setTimeout(() => { hideCustomVoiceScreen(); renderVoiceButtons(); }, 1000);
+      return;
+    }
+
+    // ── Create mode ────────────────────────────────────────────────────────
+    const name = customVoiceNameInput.value.trim();
+    if (!name) return;
 
     const newVoice = { id: `cv:${Date.now()}`, name, prompt };
     customVoices.push(newVoice);
@@ -728,10 +927,15 @@ async function init() {
 
     flashMessage(voiceSavedMsg);
     renderSavedVoicesList();
-    setTimeout(() => {
-      hideCustomVoiceScreen();
-      renderVoiceButtons();
-    }, 1000);
+    setTimeout(() => { hideCustomVoiceScreen(); renderVoiceButtons(); }, 1000);
+  });
+
+  btnResetVoice.addEventListener('click', async () => {
+    if (!editingVoiceKey || editingVoiceKey.startsWith('cv:')) return;
+    delete voiceOverrides[editingVoiceKey];
+    await chrome.storage.local.set({ voiceOverrides });
+    customVoicePromptInput.value = VOICES[editingVoiceKey].prompt;
+    flashMessage(voiceSavedMsg);
   });
 
   savedVoicesList.addEventListener('click', async (e) => {
@@ -739,7 +943,7 @@ async function init() {
     if (!btn) return;
     const id = btn.dataset.id;
     customVoices = customVoices.filter(cv => cv.id !== id);
-    if (selectedVoiceKey === id) selectedVoiceKey = 'jonwu';
+    if (selectedVoiceKey === id) selectedVoiceKey = 'naruto';
     await chrome.storage.local.set({ customVoices, selectedVoice: selectedVoiceKey });
     renderSavedVoicesList();
     renderVoiceButtons();
@@ -756,12 +960,34 @@ async function init() {
   btnPostAll.addEventListener('click', postAll);
   btnClearData.addEventListener('click', clearExtensionData);
 
+  likeAllCheckbox.addEventListener('change', async () => {
+    autoLikeDefault = likeAllCheckbox.checked;
+    replyItems.forEach((item, i) => {
+      if (!item.liked) {
+        item.autoLike = autoLikeDefault;
+        updateLikeToggle(i);
+      }
+    });
+    await chrome.storage.local.set({ autoLikeEnabled: autoLikeDefault });
+    await saveItems();
+  });
+
+  providerSelect.addEventListener('change', async () => {
+    selectedProvider = providerSelect.value;
+    const p = PROVIDERS[selectedProvider];
+    const stored = await chrome.storage.local.get(p.storageKey);
+    updateProviderUI(selectedProvider, stored[p.storageKey]);
+    loadModels(selectedProvider, stored[p.storageKey], null);
+    await chrome.storage.local.set({ selectedProvider, selectedModel: p.defaultModel });
+  });
+
   btnSaveKey.addEventListener('click', async () => {
     const k = apiKeyInput.value.trim();
     if (!k) return;
-    await chrome.storage.local.set({ openaiApiKey: k });
+    const p = PROVIDERS[selectedProvider];
+    await chrome.storage.local.set({ [p.storageKey]: k });
     flashMessage(keySavedMsg);
-    await fetchAndPopulateModels(k, getSelectedModel());
+    loadModels(selectedProvider, k, getSelectedModel());
   });
 
   modelSelect.addEventListener('change', async () => {
@@ -777,6 +1003,13 @@ async function init() {
     if (val) await chrome.storage.local.set({ selectedModel: val });
   });
 
+  postDelayInput.addEventListener('change', async () => {
+    const val = parseFloat(postDelayInput.value) || 0;
+    postDelayInput.value = Math.max(0, val);
+    updateDelayWarning();
+    await chrome.storage.local.set({ postDelay: postDelayInput.value });
+  });
+
   modeButtonsContainer.addEventListener('click', async (e) => {
     const btn = e.target.closest('.mode-btn');
     if (!btn) return;
@@ -785,6 +1018,20 @@ async function init() {
     document.body.classList.toggle('popup-mode', mode === 'popup');
     renderModeButtons(mode);
     flashMessage(modeSavedMsg);
+  });
+
+  cardsSection.addEventListener('input', (e) => {
+    if (!e.target.classList.contains('card-textarea')) return;
+    const idx = parseInt(e.target.closest('.reply-card')?.dataset.idx, 10);
+    if (!isNaN(idx) && replyItems[idx]) replyItems[idx].reply = e.target.value;
+  });
+
+  cardsSection.addEventListener('change', async (e) => {
+    if (!e.target.classList.contains('like-checkbox')) return;
+    const idx = parseInt(e.target.dataset.idx, 10);
+    if (isNaN(idx) || replyItems[idx].liked) return;
+    replyItems[idx].autoLike = e.target.checked;
+    await saveItems();
   });
 
   cardsSection.addEventListener('click', async (e) => {

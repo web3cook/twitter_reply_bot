@@ -65,6 +65,23 @@ function findArticleByStatusId(statusId) {
   return null;
 }
 
+async function waitForArticle(statusId, timeout = 60000) {
+  const start      = Date.now();
+  const scrollStep = Math.round(window.innerHeight * 0.8);
+
+  while (true) {
+    const article = findArticleByStatusId(statusId);
+    if (article) return article;
+
+    if (Date.now() - start >= timeout) {
+      throw new Error('post not found');
+    }
+
+    window.scrollBy({ top: scrollStep, behavior: 'instant' });
+    await sleep(500);
+  }
+}
+
 async function insertTextIntoCompose(replyText) {
   const textarea = await waitFor('[data-testid="tweetTextarea_0"][contenteditable="true"]');
 
@@ -90,8 +107,7 @@ async function openReply(tweetUrl, replyText) {
   const statusId = getStatusId(tweetUrl);
   if (!statusId) throw new Error('Could not extract status ID from URL: ' + tweetUrl);
 
-  const article = findArticleByStatusId(statusId);
-  if (!article) throw new Error('Could not find article for status: ' + statusId);
+  const article = await waitForArticle(statusId);
 
   // Step 1: click the reply icon on the tweet
   const replyBtn = article.querySelector('[data-testid="reply"]');
@@ -106,8 +122,7 @@ async function postReply(tweetUrl, replyText) {
   const statusId = getStatusId(tweetUrl);
   if (!statusId) throw new Error('Could not extract status ID from URL: ' + tweetUrl);
 
-  const article = findArticleByStatusId(statusId);
-  if (!article) throw new Error('Could not find article for status: ' + statusId);
+  const article = await waitForArticle(statusId);
 
   // Scroll article into view so X doesn't virtual-DOM it away mid-interaction
   article.scrollIntoView({ behavior: 'instant', block: 'center' });
@@ -133,6 +148,26 @@ async function postReply(tweetUrl, replyText) {
 
   // Step 6: confirm post was actually sent — wait for compose textarea to disappear
   await waitForGone('[data-testid="tweetTextarea_0"]', 10000);
+
+  return { success: true };
+}
+
+async function likeTweet(tweetUrl) {
+  const statusId = getStatusId(tweetUrl);
+  if (!statusId) throw new Error('Could not extract status ID from URL: ' + tweetUrl);
+
+  const article = await waitForArticle(statusId);
+
+  article.scrollIntoView({ behavior: 'instant', block: 'center' });
+  await sleep(150);
+
+  // Already liked — nothing to do
+  if (article.querySelector('[data-testid="unlike"]')) return { success: true };
+
+  const likeBtn = article.querySelector('[data-testid="like"]');
+  if (!likeBtn) throw new Error('Like button not found');
+  likeBtn.click();
+  await sleep(100);
 
   return { success: true };
 }
