@@ -154,3 +154,119 @@ export async function callLLM(tweetText, apiKey, prompt, model, provider) {
   const data = await resp.json();
   return data.output[0].content[0].text.replace(/\n{2,}/g, '\n').trim();
 }
+
+// ── Persona / tone generation ──────────────────────────────────────────────────
+// Analyzes a sample of someone's tweets and produces a reusable voice prompt in a
+// fixed format. Separate from callLLM because it needs many more output tokens and
+// must NOT append the "Reply in character" suffix.
+
+const PERSONA_MAX_TOKENS = 1000;
+
+const PERSONA_INSTRUCTIONS = `You are an expert at analyzing how people write on X (Twitter) and turning their style into a reusable persona prompt that another AI will use to write replies in their voice.
+
+You will receive a person's name, @handle, and a sample of their recent posts and replies. Study their tone, core vibe, sentiment, perspective, humor, capitalization, sentence length, slang, punctuation, and recurring themes.
+
+Then output a persona prompt in EXACTLY the format below. Rules:
+- Fill in every <...> placeholder with specifics drawn from the samples. Never leave a placeholder unfilled and never output the angle brackets.
+- Keep the first two fixed style rules, then add 3 to 5 more style rules that capture how THIS person specifically writes (e.g. always lowercase, very short, dry, uses certain words).
+- In the examples section, list 6 to 8 of the most characteristic SHORT lines taken from their real posts or replies (verbatim or lightly trimmed, one per line, each prefixed with "- ").
+- Output ONLY the persona prompt. No preamble, no explanation, no markdown code fences.
+
+FORMAT:
+You are replying on X exactly like <Person Name>. <occupation / short identity>
+Core Vibe: <...>
+Sentiment: <...>
+Perspective: <...>
+STRICT STYLE RULES (never break these):
+- Never use emoji or emdash
+- Never be mean-spirited or punch down on someone's feelings
+- Sound human and not AI
+- <style rule derived from their writing>
+- <style rule derived from their writing>
+- <style rule derived from their writing>
+EXACT VOICE EXAMPLES TO MATCH PERFECTLY(These are just examples don't use as it is):
+- <real short line>
+- <real short line>
+- <real short line>
+- <real short line>
+- <real short line>
+- <real short line>
+Your replies should feel like <how this person sounds, one short phrase>. Always reply in 1 line`;
+
+export async function generatePersona(samplesText, apiKey, model, provider) {
+  const resolvedModel = model || PROVIDERS[provider]?.defaultModel || 'gpt-5.4';
+
+  if (provider === 'anthropic') {
+    const resp = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+        'anthropic-dangerous-direct-browser-access': 'true',
+      },
+      body: JSON.stringify({
+        model: resolvedModel,
+        max_tokens: PERSONA_MAX_TOKENS,
+        system: PERSONA_INSTRUCTIONS,
+        messages: [{ role: 'user', content: samplesText }],
+        temperature: 0.5,
+      }),
+    });
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({}));
+      if (isBillingError(resp.status, err)) throw new Error('RECHARGE_REQUIRED');
+      throw new Error(err?.error?.message || `Anthropic error ${resp.status}`);
+    }
+    const data = await resp.json();
+    return data.content[0].text.trim();
+  }
+
+  if (provider === 'deepseek' || provider === 'xai') {
+    const url = provider === 'deepseek'
+      ? 'https://api.deepseek.com/chat/completions'
+      : 'https://api.x.ai/v1/chat/completions';
+    const body = {
+      model: resolvedModel,
+      messages: [
+        { role: 'system', content: PERSONA_INSTRUCTIONS },
+        { role: 'user', content: samplesText },
+      ],
+      max_tokens: PERSONA_MAX_TOKENS,
+    };
+    if (supportsTemperature(resolvedModel)) body.temperature = 0.5;
+    const resp = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+      body: JSON.stringify(body),
+    });
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({}));
+      if (isBillingError(resp.status, err)) throw new Error('RECHARGE_REQUIRED');
+      throw new Error(err?.error?.message || `${PROVIDERS[provider].name} error ${resp.status}`);
+    }
+    const data = await resp.json();
+    return data.choices[0].message.content.trim();
+  }
+
+  // Default: OpenAI Responses API
+  const body = {
+    model: resolvedModel,
+    max_output_tokens: PERSONA_MAX_TOKENS,
+    instructions: PERSONA_INSTRUCTIONS,
+    input: samplesText,
+  };
+  if (supportsTemperature(resolvedModel)) body.temperature = 0.5;
+  const resp = await fetch('https://api.openai.com/v1/responses', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+    body: JSON.stringify(body),
+  });
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({}));
+    if (isBillingError(resp.status, err)) throw new Error('RECHARGE_REQUIRED');
+    throw new Error(err?.error?.message || `OpenAI error ${resp.status}`);
+  }
+  const data = await resp.json();
+  return data.output[0].content[0].text.trim();
+}

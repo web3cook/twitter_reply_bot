@@ -1,13 +1,15 @@
-import { Naruto, Mert, Medusa, sarcastic, intern } from './voices.js';
-import { PROVIDERS, callLLM } from './models.js';
+import { Mert, sarcastic, intern } from '../utils/voices.js';
+import { PROVIDERS, callLLM, generatePersona } from '../utils/models.js';
+import { PLATFORMS, resolveActivePlatformId } from '../utils/platform.js';
+import { getPlatformTab, waitForTabComplete, navigateTab } from '../utils/tabs.js';
 
-const STORAGE_KEY    = 'xReplyBotData';
 const DRAFT_DELAY_MS = 200;
 
+// Storage key for this platform's reply cards (kept separate per platform).
+function storageKey() { return `replyBotData_${activePlatform.id}`; }
+
 const VOICES = {
-  naruto:    { label: 'Naruto',    prompt: Naruto },
   mert:      { label: 'Mert',      prompt: Mert },
-  medusa:    { label: 'Medusa',    prompt: Medusa },
   sarcastic: { label: 'Sarcastic', prompt: sarcastic },
   intern:    { label: 'Intern',    prompt: intern },
 };
@@ -22,18 +24,21 @@ const STATUS_LABELS = {
   pending:  'pending',
 };
 
-let xTabId           = null;
+let activePlatform   = PLATFORMS.x;   // resolved in init()
+let platformTabId    = null;
 let replyItems       = [];
 let composeInjected  = false;
 let customVoices     = [];
 let voiceOverrides   = {};
 let editingVoiceKey  = null;
-let selectedVoiceKey = 'naruto';
+let selectedVoiceKey = 'mert';
 let selectedProvider = 'openai';
 let autoLikeDefault  = false;
 let loggedInUsername = null;
 
 const loginModal             = document.getElementById('login-modal');
+const loginModalTitle        = document.getElementById('login-modal-title');
+const platformToggle         = document.getElementById('platform-toggle');
 const btnOpenXLogin          = document.getElementById('btn-open-x-login');
 const btnCheckAgain          = document.getElementById('btn-check-again');
 const contextBanner          = document.getElementById('context-banner');
@@ -77,6 +82,11 @@ const customVoiceNameInput    = document.getElementById('custom-voice-name');
 const customVoicePromptInput  = document.getElementById('custom-voice-prompt');
 const btnSaveVoice            = document.getElementById('btn-save-voice');
 const btnResetVoice           = document.getElementById('btn-reset-voice');
+const profileImportGroup      = document.getElementById('profile-import-group');
+const profileImportLabel      = document.getElementById('profile-import-label');
+const profileUsernameInput    = document.getElementById('profile-username');
+const btnGenerateTone         = document.getElementById('btn-generate-tone');
+const toneStatus              = document.getElementById('tone-status');
 const voiceSavedMsg           = document.getElementById('voice-saved-msg');
 const savedVoicesSection     = document.getElementById('saved-voices-section');
 const savedVoicesList        = document.getElementById('saved-voices-list');
@@ -85,9 +95,15 @@ function sleep(ms) {
   return new Promise(r => setTimeout(r, ms));
 }
 
+// Randomize the wait per post to look more human: a random time in
+// [base - 10, base + 10] seconds. When base < 10s, jitter up only ([base, base + 10])
+// so we never drop near zero.
 function getPostDelayMs() {
-  const secs = parseFloat(postDelayInput.value) || 0;
-  return Math.max(200, secs * 1000);
+  const base  = parseFloat(postDelayInput.value) || 0;
+  const lower = base < 10 ? base : base - 10;
+  const upper = base + 10;
+  const secs  = lower + Math.random() * (upper - lower);
+  return Math.max(200, Math.round(secs * 1000));
 }
 
 function updateDelayWarning() {
@@ -108,39 +124,38 @@ function escapeHtml(str) {
   return (str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
-async function getXTab() {
-  const tabs = await chrome.tabs.query({ url: ['https://x.com/*'] });
-  return tabs.length ? tabs[0] : null;
-}
-
-async function ensureXTab() {
-  if (xTabId) return true;
-  const tab = await getXTab();
-  if (!tab) { alert('No X tab found. Open x.com first.'); return false; }
-  xTabId = tab.id;
+async function ensurePlatformTab() {
+  if (platformTabId) return true;
+  const tab = await getPlatformTab(activePlatform);
+  if (!tab) { alert(`No ${activePlatform.name} tab found. Open ${activePlatform.name} first.`); return false; }
+  platformTabId = tab.id;
   return true;
 }
 
-async function focusOrOpenXTab() {
-  const tab = await getXTab();
+async function focusOrOpenPlatformTab() {
+  const tab = await getPlatformTab(activePlatform);
   if (tab) {
     await chrome.tabs.update(tab.id, { active: true });
     await chrome.windows.update(tab.windowId, { focused: true });
   } else {
-    await chrome.tabs.create({ url: 'https://x.com' });
+    await chrome.tabs.create({ url: activePlatform.homeUrl });
   }
-  setTimeout(updateOpenXButton, 600);
+  setTimeout(updateOpenButton, 600);
 }
 
-async function updateOpenXButton() {
+async function navigatePlatformTab(url) {
+  await navigateTab(platformTabId, url);
+}
+
+async function updateOpenButton() {
   const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  const isXActive = activeTab?.url?.startsWith('https://x.com') || false;
-  if (isXActive) {
+  const isActive = activeTab?.url?.startsWith(activePlatform.urlPrefix) || false;
+  if (isActive) {
     btnOpenX.classList.add('secondary');
-    btnOpenX.textContent = 'X Open';
+    btnOpenX.textContent = activePlatform.openButtonLabel.active;
   } else {
     btnOpenX.classList.remove('secondary');
-    btnOpenX.textContent = 'Open X →';
+    btnOpenX.textContent = activePlatform.openButtonLabel.open;
   }
 }
 
@@ -199,6 +214,15 @@ function renderSavedVoicesList() {
   });
 }
 
+function resetToneImport() {
+  profileUsernameInput.value = '';
+  toneStatus.textContent = '';
+  toneStatus.classList.add('hidden');
+  toneStatus.classList.remove('error');
+  btnGenerateTone.disabled = false;
+  btnGenerateTone.textContent = 'Generate';
+}
+
 function showCustomVoiceScreen() {
   editingVoiceKey               = null;
   customVoiceScreenTitle.textContent = 'Custom Voice';
@@ -207,6 +231,8 @@ function showCustomVoiceScreen() {
   customVoiceNameInput.readOnly = false;
   customVoicePromptInput.value  = '';
   btnResetVoice.classList.add('hidden');
+  profileImportGroup.classList.remove('hidden');
+  resetToneImport();
   renderSavedVoicesList();
   customVoiceScreen.classList.remove('hidden');
 }
@@ -216,6 +242,8 @@ function showEditVoiceScreen(voiceKey) {
   customVoiceScreenTitle.textContent = 'Edit Voice';
   btnSaveVoice.textContent      = 'Save Changes';
   savedVoicesSection.classList.add('hidden');
+  profileImportGroup.classList.add('hidden');
+  resetToneImport();
 
   if (voiceKey.startsWith('cv:')) {
     const cv = customVoices.find(v => v.id === voiceKey);
@@ -348,12 +376,97 @@ async function callPageFn(tabId, fn, args = []) {
   return results[0].result;
 }
 
+// ── Tone-from-profile generation ───────────────────────────────────────────────
+
+const PROFILE_SCRAPE_CAP   = 50;   // max posts / replies to collect each
+const PROFILE_MAX_CHARS    = 300;  // skip tweets longer than this
+
+function setToneStatus(msg, isError = false) {
+  toneStatus.textContent = msg;
+  toneStatus.classList.toggle('error', isError);
+  toneStatus.classList.remove('hidden');
+}
+
+async function generateToneFromProfile() {
+  const rawInput = profileUsernameInput.value.trim();
+  if (!rawInput) { setToneStatus(`Enter a ${activePlatform.name} username first.`, true); return; }
+  // Accept @handle, handle, or a full profile URL
+  const handle = activePlatform.stripProfileInput(rawInput);
+  if (!handle) { setToneStatus('Could not read a username from that.', true); return; }
+
+  const p = PROVIDERS[selectedProvider];
+  const storedKey = await chrome.storage.local.get(p.storageKey);
+  const apiKey = storedKey[p.storageKey];
+  if (!apiKey) { setToneStatus(`Set your ${p.name} API key in Settings first.`, true); return; }
+
+  if (!await ensurePlatformTab()) { setToneStatus(`Open ${activePlatform.name} in a tab first.`, true); return; }
+
+  btnGenerateTone.disabled    = true;
+  btnGenerateTone.textContent = 'Working…';
+
+  // Remember where the user was so we can restore it afterward
+  let originalUrl = null;
+  try { originalUrl = (await chrome.tabs.get(platformTabId)).url; } catch {}
+
+  const restore = () => { if (originalUrl) navigatePlatformTab(originalUrl).catch(() => {}); };
+
+  try {
+    setToneStatus(`Opening @${handle} and reading posts…`);
+    await navigatePlatformTab(activePlatform.profileUrl(handle));
+    await injectFile(platformTabId, activePlatform.scraperFile);
+    const postsRes = await callPageFn(
+      platformTabId,
+      activePlatform.pageFns.scrapeAuthoredTweets,
+      [handle, PROFILE_SCRAPE_CAP, PROFILE_MAX_CHARS]
+    );
+    if (!postsRes.loggedIn) throw new Error(`Not logged in to ${activePlatform.name}.`);
+
+    setToneStatus('Reading replies…');
+    await navigatePlatformTab(activePlatform.repliesUrl(handle));
+    await injectFile(platformTabId, activePlatform.scraperFile);
+    const repliesRes = await callPageFn(
+      platformTabId,
+      activePlatform.pageFns.scrapeAuthoredTweets,
+      [handle, PROFILE_SCRAPE_CAP, PROFILE_MAX_CHARS]
+    );
+
+    const posts   = postsRes.texts   || [];
+    const replies = repliesRes.texts || [];
+    if (posts.length + replies.length === 0) {
+      throw new Error('No tweets found. Check the username or try a more active account.');
+    }
+    const displayName = postsRes.displayName || repliesRes.displayName || handle;
+
+    // Send the user's tab back to where they were while the model thinks
+    restore();
+
+    setToneStatus(`Analyzing ${posts.length} posts + ${replies.length} replies…`);
+    const samples =
+      `Person: ${displayName} (@${handle})\n\n` +
+      `POSTS:\n${posts.map((t, i) => `${i + 1}. ${t}`).join('\n')}\n\n` +
+      `REPLIES:\n${replies.map((t, i) => `${i + 1}. ${t}`).join('\n')}`;
+
+    const persona = await generatePersona(samples, apiKey, getSelectedModel(), selectedProvider);
+
+    customVoiceNameInput.value   = displayName;
+    customVoicePromptInput.value = persona.trim();
+    setToneStatus(`Done — tone built from ${posts.length + replies.length} tweets. Review and Save Voice.`);
+  } catch (err) {
+    restore();
+    if (err.message === 'RECHARGE_REQUIRED') {
+      setToneStatus('Your API key has no credits. Please recharge it.', true);
+    } else {
+      setToneStatus('Failed: ' + err.message, true);
+    }
+  } finally {
+    btnGenerateTone.disabled    = false;
+    btnGenerateTone.textContent = 'Generate';
+  }
+}
+
 async function checkLogin(tabId) {
   try {
-    const loggedIn = await callPageFn(tabId, () => {
-      return !!document.querySelector('[data-testid="SideNav_AccountSwitcher_Button"]') ||
-             !!document.querySelector('[data-testid="AppTabBar_Home_Link"]');
-    }, []);
+    const loggedIn = await callPageFn(tabId, activePlatform.loginCheckFn, []);
     loginDot.className = 'dot ' + (loggedIn ? 'dot-green' : 'dot-red');
     loginDot.title = loggedIn ? 'Logged in' : 'Not logged in';
     if (!loggedIn) loginModal.classList.remove('hidden');
@@ -366,12 +479,24 @@ async function checkLogin(tabId) {
 }
 
 async function saveItems() {
-  await chrome.storage.local.set({ [STORAGE_KEY]: replyItems });
+  await chrome.storage.local.set({ [storageKey()]: replyItems });
 }
 
 async function loadItems() {
-  const data = await chrome.storage.local.get(STORAGE_KEY);
-  replyItems = (data[STORAGE_KEY] || []).map(item => ({
+  const key = storageKey();
+  const data = await chrome.storage.local.get(key);
+  let items = data[key];
+
+  // One-time migration from the legacy single-platform key.
+  if (items == null && activePlatform.id === 'x') {
+    const legacy = await chrome.storage.local.get('xReplyBotData');
+    if (legacy.xReplyBotData) {
+      items = legacy.xReplyBotData;
+      await chrome.storage.local.set({ [key]: items });
+    }
+  }
+
+  replyItems = (items || []).map(item => ({
     liked: false, autoLike: false, ...item,
   }));
 }
@@ -387,9 +512,9 @@ function showBanner(type, text) {
 function resolvePrompt() {
   if (selectedVoiceKey.startsWith('cv:')) {
     const cv = customVoices.find(v => v.id === selectedVoiceKey);
-    return cv?.prompt?.trim() || VOICES.naruto.prompt;
+    return cv?.prompt?.trim() || VOICES.mert.prompt;
   }
-  return voiceOverrides[selectedVoiceKey] || VOICES[selectedVoiceKey]?.prompt || VOICES.naruto.prompt;
+  return voiceOverrides[selectedVoiceKey] || VOICES[selectedVoiceKey]?.prompt || VOICES.mert.prompt;
 }
 
 function updateDraftCounter() {
@@ -529,7 +654,7 @@ function getCardReplyText(idx) {
 
 async function ensureComposeInjected() {
   if (!composeInjected) {
-    await injectFile(xTabId, 'scripts/page_compose.js');
+    await injectFile(platformTabId, activePlatform.composeFile);
     composeInjected = true;
   }
 }
@@ -537,12 +662,12 @@ async function ensureComposeInjected() {
 async function executeCompose(idx, pageFn, pendingStatus, doneStatus) {
   const item      = replyItems[idx];
   const replyText = getCardReplyText(idx);
-  if (!await ensureXTab()) return;
+  if (!await ensurePlatformTab()) return;
 
   updateCardStatus(idx, pendingStatus);
   try {
     await ensureComposeInjected();
-    await callPageFn(xTabId, pageFn, [item.post.tweetUrl, replyText]);
+    await callPageFn(platformTabId, pageFn, [item.post.tweetUrl, replyText]);
     replyItems[idx].reply = replyText;
     updateCardStatus(idx, doneStatus);
     await saveItems();
@@ -553,13 +678,13 @@ async function executeCompose(idx, pageFn, pendingStatus, doneStatus) {
 }
 
 async function saveSingleDraft(idx) {
-  await executeCompose(idx, (url, text) => saveDraft(url, text), 'saving', 'drafted');
+  await executeCompose(idx, activePlatform.pageFns.saveDraft, 'saving', 'drafted');
 }
 
 async function postSingleReply(idx) {
   const item      = replyItems[idx];
   const replyText = getCardReplyText(idx);
-  if (!await ensureXTab()) return;
+  if (!await ensurePlatformTab()) return;
 
   updateCardStatus(idx, 'posting');
   try {
@@ -567,7 +692,7 @@ async function postSingleReply(idx) {
 
     if (item.autoLike && !item.liked) {
       try {
-        await callPageFn(xTabId, (url) => likeTweet(url), [item.post.tweetUrl]);
+        await callPageFn(platformTabId, activePlatform.pageFns.likePost, [item.post.tweetUrl]);
         updateLikedStatus(idx);
         await saveItems();
       } catch (likeErr) {
@@ -575,7 +700,7 @@ async function postSingleReply(idx) {
       }
     }
 
-    await callPageFn(xTabId, (url, text) => postReply(url, text), [item.post.tweetUrl, replyText]);
+    await callPageFn(platformTabId, activePlatform.pageFns.postReply, [item.post.tweetUrl, replyText]);
     replyItems[idx].reply = replyText;
     updateCardStatus(idx, 'posted');
     await saveItems();
@@ -661,7 +786,7 @@ async function generateReplies() {
     return;
   }
 
-  if (!await ensureXTab()) return;
+  if (!await ensurePlatformTab()) return;
 
   btnGenerate.disabled    = true;
   btnGenerate.textContent = 'Scrolling & scraping…';
@@ -669,8 +794,8 @@ async function generateReplies() {
   let posts;
   try {
     const maxPosts = Math.max(1, parseInt(postCountInput.value, 10) || 10);
-    await injectFile(xTabId, 'scripts/page_scraper.js');
-    const result = await callPageFn(xTabId, (n) => autoScrollAndScrape(n), [maxPosts]);
+    await injectFile(platformTabId, activePlatform.scraperFile);
+    const result = await callPageFn(platformTabId, activePlatform.pageFns.autoScrollAndScrape, [maxPosts]);
     posts = result.posts;
   } catch (err) {
     alert('Scrape failed: ' + err.message);
@@ -694,15 +819,15 @@ async function generateCurrentReplies() {
     return;
   }
 
-  if (!await ensureXTab()) return;
+  if (!await ensurePlatformTab()) return;
 
   btnReplyCurrent.disabled    = true;
   btnReplyCurrent.textContent = 'Scanning…';
 
   let posts;
   try {
-    await injectFile(xTabId, 'scripts/page_scraper.js');
-    const result = await callPageFn(xTabId, () => scrapeCurrentView());
+    await injectFile(platformTabId, activePlatform.scraperFile);
+    const result = await callPageFn(platformTabId, activePlatform.pageFns.scrapeCurrentView);
     posts = result.posts;
   } catch (err) {
     alert('Scrape failed: ' + err.message);
@@ -718,20 +843,10 @@ async function generateCurrentReplies() {
 
 async function scrollToFirstPending() {
   const first = replyItems.find(i => i.status === 'pending');
-  if (!first || !await ensureXTab()) return;
-  const statusId = first.post.tweetUrl.match(/\/status\/(\d+)/)?.[1];
+  if (!first || !await ensurePlatformTab()) return;
+  const statusId = activePlatform.parseStatusId(first.post.tweetUrl);
   if (!statusId) return;
-  await callPageFn(xTabId, (sid) => {
-    const articles = document.querySelectorAll('article[data-testid="tweet"]');
-    for (const a of articles) {
-      if (a.querySelector(`a[href*="/status/${sid}"]`)) {
-        a.scrollIntoView({ behavior: 'instant', block: 'center' });
-        return;
-      }
-    }
-    // Tweet virtualized out of DOM — scroll to top so it re-renders
-    window.scrollTo({ top: 0, behavior: 'instant' });
-  }, [statusId]);
+  await callPageFn(platformTabId, activePlatform.scrollToPendingFn, [statusId]);
   await sleep(600);
 }
 
@@ -764,12 +879,87 @@ async function postAll() {
 }
 
 async function clearExtensionData() {
-  await chrome.storage.local.remove(STORAGE_KEY);
+  await chrome.storage.local.remove(storageKey());
   replyItems             = [];
   cardsSection.innerHTML = '';
   composeInjected        = false;
   flashMessage(clearMsg);
   updateDraftCounter();
+}
+
+// ── Platform selection ────────────────────────────────────────────────────────
+
+function renderPlatformToggle() {
+  if (!platformToggle) return;
+  platformToggle.querySelectorAll('.platform-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.platform === activePlatform.id);
+  });
+}
+
+// Apply all platform-dependent chrome to the static UI (labels, draft visibility).
+function applyPlatformUI() {
+  document.title = `${activePlatform.name} Reply Bot`;
+  if (loginModalTitle) loginModalTitle.textContent = activePlatform.loginLabel;
+  btnOpenXLogin.textContent = activePlatform.openButtonLabel.open.replace(/\s*→$/, '');
+  if (profileImportLabel) {
+    profileImportLabel.textContent = `Generate tone from a ${activePlatform.name} profile (optional)`;
+  }
+  document.body.classList.toggle('no-drafts', !activePlatform.caps.supportsDrafts);
+  renderPlatformToggle();
+}
+
+// (Re)load everything that depends on the active platform's tab: login, banners, cards.
+async function loadPlatformState() {
+  loggedInUsername       = null;
+  platformTabId          = null;
+  composeInjected        = false;
+  replyItems             = [];
+  cardsSection.innerHTML = '';
+  contextBanner.className = 'banner hidden';
+  listSection.classList.add('hidden');
+  loginModal.classList.add('hidden');
+  updateDraftCounter();
+
+  await updateOpenButton();
+
+  const tab = await getPlatformTab(activePlatform);
+  if (!tab) return;
+
+  platformTabId = tab.id;
+  const loggedIn = await checkLogin(platformTabId);
+  if (!loggedIn) return;
+
+  try {
+    loggedInUsername = await callPageFn(platformTabId, activePlatform.loggedInUserFn, []);
+  } catch { }
+
+  // Context banners — only platforms that declare hints (X).
+  const hints = activePlatform.contextHints || {};
+  if (hints.profileSuffixes) {
+    const url          = tab.url || '';
+    const urlPath      = new URL(url).pathname.toLowerCase().replace(/\/$/, '');
+    const isListPage   = hints.listMarker && url.includes(hints.listMarker);
+    const isOwnProfile = loggedInUsername &&
+      hints.profileSuffixes.some(s => urlPath === `/${loggedInUsername}${s}`);
+
+    if (isOwnProfile && hints.ownProfileWarning) {
+      showBanner('warn', hints.ownProfileWarning);
+    } else if (!isListPage && hints.nonListTip) {
+      showBanner('tip', hints.nonListTip);
+    }
+  }
+
+  listSection.classList.remove('hidden');
+  await loadItems();
+  if (replyItems.length > 0) renderCards();
+}
+
+async function selectPlatform(id) {
+  if (!PLATFORMS[id] || id === activePlatform.id) return;
+  activePlatform = PLATFORMS[id];
+  await chrome.storage.local.set({ platformOverride: id });
+  applyPlatformUI();
+  await loadPlatformState();
 }
 
 // ── Init ──────────────────────────────────────────────────────────────────────
@@ -798,70 +988,44 @@ async function init() {
 
   customVoices     = stored.customVoices  || [];
   voiceOverrides   = stored.voiceOverrides || {};
-  selectedVoiceKey = stored.selectedVoice || 'naruto';
+  selectedVoiceKey = stored.selectedVoice || 'mert';
   renderVoiceButtons();
 
-  await updateOpenXButton();
-
-  const xTab = await getXTab();
-
-  if (xTab) {
-    xTabId = xTab.id;
-    const loggedIn = await checkLogin(xTabId);
-
-    if (loggedIn) {
-      try {
-        loggedInUsername = await callPageFn(xTabId, () => {
-          const a = document.querySelector('[data-testid="AppTabBar_Profile_Link"]');
-          return a ? a.getAttribute('href').replace(/^\//, '').toLowerCase() : null;
-        }, []);
-      } catch { }
-
-      const xUrl            = xTab.url || '';
-      const urlPath         = new URL(xUrl).pathname.toLowerCase().replace(/\/$/, '');
-      const isListPage      = xUrl.includes('/lists/');
-      const profileSuffixes = ['', '/with_replies', '/media', '/likes'];
-      const isOwnProfile    = loggedInUsername &&
-        profileSuffixes.some(s => urlPath === `/${loggedInUsername}${s}`);
-
-      if (isOwnProfile) {
-        showBanner('warn', "This is your profile. Open a page with other people's posts for replies.");
-      } else if (!isListPage) {
-        showBanner('tip', 'Works best on X List pages. Go to My Lists for the best results.');
-      }
-
-      listSection.classList.remove('hidden');
-      await loadItems();
-      if (replyItems.length > 0) renderCards();
-    }
-  }
+  activePlatform = PLATFORMS[await resolveActivePlatformId()] || PLATFORMS.x;
+  applyPlatformUI();
+  await loadPlatformState();
 
   // ── Event listeners ─────────────────────────────────────────────────────────
 
-  btnOpenXLogin.addEventListener('click', focusOrOpenXTab);
+  btnOpenXLogin.addEventListener('click', focusOrOpenPlatformTab);
   btnCheckAgain.addEventListener('click', async () => {
     loginModal.classList.add('hidden');
-    if (xTabId) {
-      const ok = await checkLogin(xTabId);
+    if (platformTabId) {
+      const ok = await checkLogin(platformTabId);
       if (!ok) loginModal.classList.remove('hidden');
     }
   });
 
-  btnOpenX.addEventListener('click', focusOrOpenXTab);
+  btnOpenX.addEventListener('click', focusOrOpenPlatformTab);
+
+  if (platformToggle) {
+    platformToggle.addEventListener('click', (e) => {
+      const btn = e.target.closest('.platform-btn');
+      if (btn) selectPlatform(btn.dataset.platform);
+    });
+  }
+
   btnGoList.addEventListener('click', async () => {
-    const tab = await getXTab();
-    let listsUrl = 'https://x.com/i/lists';
+    const tab = await getPlatformTab(activePlatform);
+    let username = null;
     if (tab) {
-      try {
-        const username = await callPageFn(tab.id, () => {
-          const a = document.querySelector('[data-testid="AppTabBar_Profile_Link"]');
-          return a ? a.getAttribute('href').replace(/^\//, '') : null;
-        }, []);
-        if (username) listsUrl = `https://x.com/${username}/lists`;
-      } catch { }
-      await chrome.tabs.update(tab.id, { url: listsUrl, active: true });
+      try { username = await callPageFn(tab.id, activePlatform.loggedInUserFn, []); } catch { }
+    }
+    const target = activePlatform.listsUrl(username);
+    if (tab) {
+      await chrome.tabs.update(tab.id, { url: target, active: true });
     } else {
-      await chrome.tabs.create({ url: listsUrl });
+      await chrome.tabs.create({ url: target });
     }
   });
 
@@ -885,6 +1049,11 @@ async function init() {
   });
 
   btnBack.addEventListener('click', hideCustomVoiceScreen);
+
+  btnGenerateTone.addEventListener('click', generateToneFromProfile);
+  profileUsernameInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); generateToneFromProfile(); }
+  });
 
   btnSaveVoice.addEventListener('click', async () => {
     const prompt = customVoicePromptInput.value.trim();
@@ -943,15 +1112,15 @@ async function init() {
     if (!btn) return;
     const id = btn.dataset.id;
     customVoices = customVoices.filter(cv => cv.id !== id);
-    if (selectedVoiceKey === id) selectedVoiceKey = 'naruto';
+    if (selectedVoiceKey === id) selectedVoiceKey = 'mert';
     await chrome.storage.local.set({ customVoices, selectedVoice: selectedVoiceKey });
     renderSavedVoicesList();
     renderVoiceButtons();
   });
 
-  chrome.tabs.onActivated.addListener(updateOpenXButton);
+  chrome.tabs.onActivated.addListener(updateOpenButton);
   chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
-    if (changeInfo.status === 'complete') updateOpenXButton();
+    if (changeInfo.status === 'complete') updateOpenButton();
   });
 
   btnGenerate.addEventListener('click', generateReplies);
@@ -1047,12 +1216,12 @@ async function init() {
     } else if (e.target.classList.contains('btn-post-reply')) {
       await postSingleReply(idx);
     } else if (e.target.classList.contains('btn-open-reply')) {
-      if (!await ensureXTab()) return;
+      if (!await ensurePlatformTab()) return;
       const item      = replyItems[idx];
       const replyText = getCardReplyText(idx);
       try {
         await ensureComposeInjected();
-        await callPageFn(xTabId, (url, text) => openReply(url, text), [item.post.tweetUrl, replyText]);
+        await callPageFn(platformTabId, activePlatform.pageFns.openReply, [item.post.tweetUrl, replyText]);
       } catch (err) {
         alert('Could not open reply compose: ' + err.message);
       }

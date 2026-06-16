@@ -52,7 +52,10 @@ body {
   flex-direction: column;
   flex: 1;
   min-height: 0;
-  overflow-y: auto;
+  overflow-y: scroll;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: var(--accent) rgba(255, 255, 255, 0.06);
 }
 
 .hidden { display: none !important; }
@@ -358,11 +361,18 @@ button.small { padding: 5px 11px; font-size: 11px; }
   flex: 1;
 }
 
-#main-screen::-webkit-scrollbar { width: 4px; }
-#main-screen::-webkit-scrollbar-track { background: transparent; }
-#main-screen::-webkit-scrollbar-thumb {
-  background: var(--border);
+#main-screen::-webkit-scrollbar { width: 10px; }
+#main-screen::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.06);
   border-radius: 99px;
+}
+#main-screen::-webkit-scrollbar-thumb {
+  background: var(--accent);
+  border-radius: 99px;
+  border: 2px solid var(--bg);
+}
+#main-screen::-webkit-scrollbar-thumb:hover {
+  background: #05e05c;
 }
 
 .reply-card {
@@ -528,6 +538,35 @@ details#settings-section[open] > summary {
   border-color: rgba(4, 197, 80, 0.35);
 }
 
+/* ── Platform toggle ── */
+.platform-toggle {
+  display: flex;
+  gap: 6px;
+  padding: 8px 14px 0;
+}
+.platform-btn {
+  flex: 1;
+  background: var(--surface-2);
+  color: var(--text-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  padding: 6px 10px;
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.12s;
+}
+.platform-btn:hover:not(.active) { color: var(--text); }
+.platform-btn.active {
+  background: var(--accent-dim);
+  color: var(--accent);
+  border-color: rgba(4, 197, 80, 0.35);
+}
+
+/* Hide draft actions on platforms that don't support drafts (e.g. LinkedIn) */
+body.no-drafts #btn-draft-all,
+body.no-drafts .btn-save-draft { display: none; }
+
 /* ── Generate buttons row ── */
 .generate-row {
   display: flex;
@@ -679,6 +718,29 @@ textarea {
   text-transform: uppercase;
   letter-spacing: 0.5px;
   color: var(--text-2);
+}
+
+.profile-import-row {
+  display: flex;
+  gap: 6px;
+}
+.profile-import-row input {
+  flex: 1;
+  min-width: 0;
+}
+.profile-import-row button {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.tone-status {
+  display: block;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--text-2);
+}
+.tone-status.error {
+  color: var(--error);
 }
 
 .saved-voices-title {
