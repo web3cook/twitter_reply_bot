@@ -30,8 +30,12 @@ function isLoggedIn() {
 // "expandedSFKwOZ…nepdcFeedType_MAIN_FEED_RELEVANCE" → "SFKwOZ…nepdc".
 function getPostId(root) {
   const ck = root.getAttribute('componentkey') || '';
-  const m = ck.match(/^expanded(.+)FeedType_MAIN_FEED_RELEVANCE$/);
-  return m ? m[1] : null;
+  const m = ck.match(/^expanded(.+?)FeedType_/);
+  if (m) return m[1];
+  if (ck.startsWith('expanded') && ck.length > 20) {
+    return ck.replace(/^expanded/, '').split('FeedType')[0];
+  }
+  return null;
 }
 
 // All real feed posts currently in the DOM (skips job carousels and other modules
@@ -39,13 +43,25 @@ function getPostId(root) {
 function getFeedPosts() {
   const out = [];
   const seen = new Set();
+
+  // Try finding via listitems with componentkey expanded
+  for (const el of document.querySelectorAll('[role="listitem"]')) {
+    const id = getPostId(el);
+    if (id && !seen.has(id)) {
+      seen.add(id);
+      out.push(el);
+    }
+  }
+
+  // Fallback: finding via commentary
   for (const commentary of document.querySelectorAll('p[componentkey^="feed-commentary"]')) {
-    const root = commentary.closest('[role="listitem"]');
+    const root = commentary.closest('[role="listitem"]') || commentary.closest('[componentkey^="expanded"]');
     if (!root) continue;
     const id = getPostId(root);
-    if (!id || seen.has(id)) continue;
-    seen.add(id);
-    out.push(root);
+    if (id && !seen.has(id)) {
+      seen.add(id);
+      out.push(root);
+    }
   }
   return out;
 }
@@ -119,14 +135,95 @@ function extractPost(root) {
 
   const textEl = root.querySelector('p[componentkey^="feed-commentary"] [data-testid="expandable-text-box"]');
   const text = textEl ? cleanPostText(textEl.innerText) : '';
-  if (!text) return null;
+
+  // Extract document container info if present
+  let docInfo = null;
+  const docContainer = root.querySelector('[componentkey^="document-container"]');
+  if (docContainer) {
+    const pElements = Array.from(docContainer.querySelectorAll('p'));
+    let title = '';
+    let pages = '';
+
+    const titleEl = docContainer.querySelector('p');
+    if (titleEl) title = titleEl.textContent.trim();
+
+    const pagesEl = pElements.find(p => p.textContent.toLowerCase().includes('page'));
+    if (pagesEl) pages = pagesEl.textContent.trim();
+
+    const slides = [];
+    for (const img of docContainer.querySelectorAll('img')) {
+      const alt = img.getAttribute('alt') || '';
+      const src = img.getAttribute('src') || '';
+      if (alt || src) {
+        slides.push({ alt: alt.trim(), src: src.trim() });
+      }
+    }
+    docInfo = { title, pages, slides };
+  }
+
+  // Extract other post content images if not a document post
+  const images = [];
+  if (!docContainer) {
+    for (const img of root.querySelectorAll('img')) {
+      const isAvatar = img.closest('.feed-shared-actor') || 
+                       img.closest('[class*="actor"]') || 
+                       img.closest('[class*="avatar"]') ||
+                       (img.getAttribute('src') || '').includes('profile-displayphoto');
+      if (isAvatar) continue;
+
+      const alt = img.getAttribute('alt') || '';
+      const src = img.getAttribute('src') || '';
+      if (src && !src.includes('data:image')) {
+        images.push({ alt: alt.trim(), src: src.trim() });
+      }
+    }
+  }
+
+  // Build the complete post text representation for UI/LLM context
+  let tweetText = text;
+
+  if (docInfo) {
+    const docParts = [];
+    if (docInfo.title) docParts.push(`Document Title: ${docInfo.title}`);
+    if (docInfo.pages) docParts.push(`(${docInfo.pages})`);
+
+    let docStr = `\n\n[Document: ${docParts.join(' ')}]`;
+    if (docInfo.slides && docInfo.slides.length > 0) {
+      const slideAlts = docInfo.slides
+        .map((s, index) => s.alt ? `Slide ${index + 1}: ${s.alt}` : '')
+        .filter(Boolean);
+      if (slideAlts.length > 0) {
+        docStr += `\n` + slideAlts.join('\n');
+      }
+    }
+    tweetText = (tweetText + docStr).trim();
+  } else if (images.length > 0) {
+    const imgAlts = images
+      .map((img, index) => img.alt ? `[Image ${index + 1}: ${img.alt}]` : '[Image]')
+      .filter(Boolean);
+    if (imgAlts.length > 0) {
+      tweetText = (tweetText + `\n\n` + imgAlts.join('\n')).trim();
+    }
+  }
+
+  if (!tweetText) return null;
 
   const { displayName, username } = getAuthor(root);
 
+  console.log(`[Scraped Post] Profile: ${displayName} (@${username})`, {
+    username,
+    displayName,
+    linkedinText: tweetText,
+    linkedinUrl: `https://www.linkedin.com/feed/?postId=${id}`,
+    timePostedISO: getTimeISO(root)
+  });
+
   return {
     username: username || displayName || null,
-    tweetText: text,
+    tweetText: tweetText,
+    linkedinText: tweetText,
     tweetUrl: `https://www.linkedin.com/feed/?postId=${id}`,
+    linkedinUrl: `https://www.linkedin.com/feed/?postId=${id}`,
     timePostedISO: getTimeISO(root),
   };
 }

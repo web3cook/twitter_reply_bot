@@ -73,7 +73,7 @@ function isBillingError(status, errData) {
     msg.includes('payment');
 }
 
-export async function callLLM(tweetText, apiKey, prompt, model, provider) {
+export async function callLLM(Text, apiKey, prompt, model, provider) {
   const resolvedModel = model || PROVIDERS[provider]?.defaultModel || 'gpt-5.4';
 
   if (provider === 'anthropic') {
@@ -81,7 +81,7 @@ export async function callLLM(tweetText, apiKey, prompt, model, provider) {
       model: resolvedModel,
       max_tokens: 150,
       system: prompt,
-      messages: [{ role: 'user', content: tweetText + ' Reply in character.' }],
+      messages: [{ role: 'user', content: Text + ' Reply in character.' }],
       temperature: 0.7,
     };
     const resp = await fetch('https://api.anthropic.com/v1/messages', {
@@ -111,7 +111,7 @@ export async function callLLM(tweetText, apiKey, prompt, model, provider) {
       model: resolvedModel,
       messages: [
         { role: 'system', content: prompt },
-        { role: 'user', content: tweetText + ' Reply in character.' },
+        { role: 'user', content: Text + ' Reply in character.' },
       ],
       max_tokens: 150,
     };
@@ -135,7 +135,7 @@ export async function callLLM(tweetText, apiKey, prompt, model, provider) {
     model: resolvedModel,
     max_output_tokens: 150,
     instructions: prompt,
-    input: tweetText + ' Reply in character.',
+    input: Text + ' Reply in character.',
   };
   if (supportsTemperature(resolvedModel)) body.temperature = 0.7;
   const resp = await fetch('https://api.openai.com/v1/responses', {

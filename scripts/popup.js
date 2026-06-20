@@ -1,4 +1,5 @@
-import { Mert, sarcastic, intern } from '../utils/voices.js';
+import * as TwitterVoices from '../utils/twitter_voices.js';
+import * as LinkedInVoices from '../utils/linkedin_voices.js';
 import { PROVIDERS, callLLM, generatePersona } from '../utils/models.js';
 import { PLATFORMS, resolveActivePlatformId } from '../utils/platform.js';
 import { getPlatformTab, waitForTabComplete, navigateTab } from '../utils/tabs.js';
@@ -8,11 +9,25 @@ const DRAFT_DELAY_MS = 200;
 // Storage key for this platform's reply cards (kept separate per platform).
 function storageKey() { return `replyBotData_${activePlatform.id}`; }
 
-const VOICES = {
-  mert:      { label: 'Mert',      prompt: Mert },
-  sarcastic: { label: 'Sarcastic', prompt: sarcastic },
-  intern:    { label: 'Intern',    prompt: intern },
-};
+let VOICES = {};
+
+function getPlatformVoices() {
+  if (activePlatform.id === 'x') {
+    return {
+      mert:      { label: 'Mert',      prompt: TwitterVoices.Mert },
+      sarcastic: { label: 'Sarcastic', prompt: TwitterVoices.sarcastic },
+      intern:    { label: 'Intern',    prompt: TwitterVoices.intern },
+    };
+  } else if (activePlatform.id === 'linkedin') {
+    const v = {};
+    Object.keys(LinkedInVoices).forEach(key => {
+      const label = key.charAt(0).toUpperCase() + key.slice(1);
+      v[key] = { label, prompt: LinkedInVoices[key] };
+    });
+    return v;
+  }
+  return {};
+}
 
 const STATUS_LABELS = {
   drafted:  'drafted',
@@ -509,12 +524,20 @@ function showBanner(type, text) {
 
 // ── UI helpers ────────────────────────────────────────────────────────────────
 
+function getDefaultPrompt() {
+  const keys = Object.keys(VOICES);
+  if (keys.length > 0) {
+    return VOICES[keys[0]].prompt;
+  }
+  return "You are replying to a post. Keep your tone professional, concise, and engaging.";
+}
+
 function resolvePrompt() {
   if (selectedVoiceKey.startsWith('cv:')) {
     const cv = customVoices.find(v => v.id === selectedVoiceKey);
-    return cv?.prompt?.trim() || VOICES.mert.prompt;
+    return cv?.prompt?.trim() || getDefaultPrompt();
   }
-  return voiceOverrides[selectedVoiceKey] || VOICES[selectedVoiceKey]?.prompt || VOICES.mert.prompt;
+  return voiceOverrides[selectedVoiceKey] || VOICES[selectedVoiceKey]?.prompt || getDefaultPrompt();
 }
 
 function updateDraftCounter() {
@@ -905,6 +928,15 @@ function applyPlatformUI() {
     profileImportLabel.textContent = `Generate tone from a ${activePlatform.name} profile (optional)`;
   }
   document.body.classList.toggle('no-drafts', !activePlatform.caps.supportsDrafts);
+
+  // Load platform-specific voices
+  VOICES = getPlatformVoices();
+  const voiceKeys = Object.keys(VOICES);
+  if (!selectedVoiceKey.startsWith('cv:') && !VOICES[selectedVoiceKey]) {
+    selectedVoiceKey = voiceKeys.length > 0 ? voiceKeys[0] : '';
+  }
+  renderVoiceButtons();
+
   renderPlatformToggle();
 }
 
@@ -989,7 +1021,6 @@ async function init() {
   customVoices     = stored.customVoices  || [];
   voiceOverrides   = stored.voiceOverrides || {};
   selectedVoiceKey = stored.selectedVoice || 'mert';
-  renderVoiceButtons();
 
   activePlatform = PLATFORMS[await resolveActivePlatformId()] || PLATFORMS.x;
   applyPlatformUI();

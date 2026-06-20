@@ -48,21 +48,21 @@ Code runs in two contexts that cannot share state or use each other's APIs.
 
 ### Extension context
 
-- **`scripts/popup.js`** — orchestration: tab management, `chrome.storage` reads/writes, and all UI. ES module (`<script type="module">`). Imports voice prompts from `scripts/voices.js` and provider/LLM logic from `scripts/models.js`.
-- **`scripts/models.js`** — all LLM logic. Exports a `PROVIDERS` config (per-provider name, key label/placeholder, storage key, default model, model list) and `callLLM(tweetText, apiKey, prompt, model, provider)`, which dispatches to each provider's API:
+- **`scripts/popup.js`** — orchestration: tab management, `chrome.storage` reads/writes, and all UI. ES module (`<script type="module">`). Imports platform-specific voice prompts from `utils/twitter_voices.js` or `utils/linkedin_voices.js` and provider/LLM logic from `utils/models.js`.
+- **`utils/models.js`** — all LLM logic. Exports a `PROVIDERS` config (per-provider name, key label/placeholder, storage key, default model, model list) and `callLLM(tweetText, apiKey, prompt, model, provider)`, which dispatches to each provider's API:
   - OpenAI — Responses API (`POST /v1/responses`)
   - Anthropic — Messages API (`POST /v1/messages`), sent with the `anthropic-dangerous-direct-browser-access: true` header so the browser request passes CORS
   - DeepSeek & xAI — OpenAI-compatible chat completions
   - Insufficient-credit / billing errors surface a "recharge your API key" popup.
-- **`scripts/voices.js`** — ES module exporting persona system prompts: `Mert`, `sarcastic`, `intern`. `popup.js` maps them in a `VOICES` object; default voice is `mert`. Users can also create custom personas (`cv:<timestamp>` IDs) and override built-in voice prompts.
+- **`utils/twitter_voices.js`** & **`utils/linkedin_voices.js`** — ES modules exporting persona system prompts per platform. `popup.js` maps them in a `VOICES` object dynamically based on the active platform; default voice is `mert` (on X/Twitter) or the first available voice/fallback system prompt. Users can also create custom personas (`cv:<timestamp>` IDs) and override built-in voice prompts.
 - **`scripts/background.js`** — toggles between side-panel and popup display modes by listening to `chrome.storage.onChanged`.
 
 ### Page context
 
-Injected into x.com tabs via `chrome.scripting.executeScript`. No access to Chrome extension APIs.
+Injected into platform tabs via `chrome.scripting.executeScript`. No access to Chrome extension APIs.
 
-- **`scripts/page_scraper.js`** — `autoScrollAndScrape()` auto-scrolls and scrapes visible tweets, returning `{ posts, loggedIn }`.
-- **`scripts/page_compose.js`** — `openReply(url, text)`, `saveDraft(url, text)`, `postReply(url, text)`, `likeTweet(url)`. Finds the tweet article by status ID (scrolling incrementally for up to 60s via `waitForArticle` if it's been virtualized out of the DOM), opens the compose modal, and inserts text. Text insertion uses a `ClipboardEvent('paste')` with a `DataTransfer` object — more reliable than `execCommand` for X's React-controlled contenteditable.
+- **`X/scraper.js`** & **`LinkedIn/scraper.js`** — page context scrapers. `autoScrollAndScrape()` auto-scrolls and scrapes visible posts, returning `{ posts, loggedIn }`. The LinkedIn scraper parses document/PDF carousels (titles, page counts, slide alt text), regular post images, prints the scraped details to the browser console, and returns `linkedinText` / `linkedinUrl` along with legacy keys.
+- **`X/compose.js`** & **`LinkedIn/compose.js`** — page context composer actions: `openReply(url, text)`, `saveDraft(url, text)`, `postReply(url, text)`, `likePost(url)`. Re-finds posts by ID, manages the reply editing DOM interactions, and confirms submissions.
 
 ### Stored keys (`chrome.storage.local`)
 
@@ -77,7 +77,7 @@ Injected into x.com tabs via `chrome.scripting.executeScript`. No access to Chro
 | `autoLikeEnabled` | "Like All" default |
 | `postDelay` | Delay between posts (seconds) |
 | `displayMode` | `'sidepanel'` (default) or `'popup'` |
-| `xReplyBotData` | Persisted `replyItems` array |
+| `replyBotData_x` / `replyBotData_linkedin` | Persisted `replyItems` array per platform |
 
 ## Icons
 
