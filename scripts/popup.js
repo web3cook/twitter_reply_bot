@@ -230,12 +230,16 @@ function renderSavedVoicesList() {
 }
 
 function resetToneImport() {
-  profileUsernameInput.value = '';
-  toneStatus.textContent = '';
-  toneStatus.classList.add('hidden');
-  toneStatus.classList.remove('error');
-  btnGenerateTone.disabled = false;
-  btnGenerateTone.textContent = 'Generate';
+  if (profileUsernameInput) profileUsernameInput.value = '';
+  if (toneStatus) {
+    toneStatus.textContent = '';
+    toneStatus.classList.add('hidden');
+    toneStatus.classList.remove('error');
+  }
+  if (btnGenerateTone) {
+    btnGenerateTone.disabled = false;
+    btnGenerateTone.textContent = 'Generate';
+  }
 }
 
 function showCustomVoiceScreen() {
@@ -246,7 +250,11 @@ function showCustomVoiceScreen() {
   customVoiceNameInput.readOnly = false;
   customVoicePromptInput.value  = '';
   btnResetVoice.classList.add('hidden');
-  profileImportGroup.classList.remove('hidden');
+  if (activePlatform.id === 'linkedin') {
+    profileImportGroup.classList.add('hidden');
+  } else {
+    profileImportGroup.classList.remove('hidden');
+  }
   resetToneImport();
   renderSavedVoicesList();
   customVoiceScreen.classList.remove('hidden');
@@ -394,16 +402,18 @@ async function callPageFn(tabId, fn, args = []) {
 // ── Tone-from-profile generation ───────────────────────────────────────────────
 
 const PROFILE_SCRAPE_CAP   = 50;   // max posts / replies to collect each
-const PROFILE_MAX_CHARS    = 300;  // skip tweets longer than this
+const PROFILE_MAX_CHARS    = 300;  // skip posts longer than this
 
 function setToneStatus(msg, isError = false) {
-  toneStatus.textContent = msg;
-  toneStatus.classList.toggle('error', isError);
-  toneStatus.classList.remove('hidden');
+  if (toneStatus) {
+    toneStatus.textContent = msg;
+    toneStatus.classList.toggle('error', isError);
+    toneStatus.classList.remove('hidden');
+  }
 }
 
 async function generateToneFromProfile() {
-  const rawInput = profileUsernameInput.value.trim();
+  const rawInput = profileUsernameInput ? profileUsernameInput.value.trim() : '';
   if (!rawInput) { setToneStatus(`Enter a ${activePlatform.name} username first.`, true); return; }
   // Accept @handle, handle, or a full profile URL
   const handle = activePlatform.stripProfileInput(rawInput);
@@ -416,8 +426,10 @@ async function generateToneFromProfile() {
 
   if (!await ensurePlatformTab()) { setToneStatus(`Open ${activePlatform.name} in a tab first.`, true); return; }
 
-  btnGenerateTone.disabled    = true;
-  btnGenerateTone.textContent = 'Working…';
+  if (btnGenerateTone) {
+    btnGenerateTone.disabled    = true;
+    btnGenerateTone.textContent = 'Working…';
+  }
 
   // Remember where the user was so we can restore it afterward
   let originalUrl = null;
@@ -431,7 +443,7 @@ async function generateToneFromProfile() {
     await injectFile(platformTabId, activePlatform.scraperFile);
     const postsRes = await callPageFn(
       platformTabId,
-      activePlatform.pageFns.scrapeAuthoredTweets,
+      activePlatform.pageFns.scrapeAuthoredPosts,
       [handle, PROFILE_SCRAPE_CAP, PROFILE_MAX_CHARS]
     );
     if (!postsRes.loggedIn) throw new Error(`Not logged in to ${activePlatform.name}.`);
@@ -441,14 +453,15 @@ async function generateToneFromProfile() {
     await injectFile(platformTabId, activePlatform.scraperFile);
     const repliesRes = await callPageFn(
       platformTabId,
-      activePlatform.pageFns.scrapeAuthoredTweets,
+      activePlatform.pageFns.scrapeAuthoredPosts,
       [handle, PROFILE_SCRAPE_CAP, PROFILE_MAX_CHARS]
     );
 
     const posts   = postsRes.texts   || [];
     const replies = repliesRes.texts || [];
     if (posts.length + replies.length === 0) {
-      throw new Error('No tweets found. Check the username or try a more active account.');
+      const postNoun = activePlatform.id === 'linkedin' ? 'posts' : 'tweets';
+      throw new Error(`No ${postNoun} found. Check the username or try a more active account.`);
     }
     const displayName = postsRes.displayName || repliesRes.displayName || handle;
 
@@ -465,7 +478,8 @@ async function generateToneFromProfile() {
 
     customVoiceNameInput.value   = displayName;
     customVoicePromptInput.value = persona.trim();
-    setToneStatus(`Done — tone built from ${posts.length + replies.length} tweets. Review and Save Voice.`);
+    const postNoun = activePlatform.id === 'linkedin' ? 'posts' : 'tweets';
+    setToneStatus(`Done — tone built from ${posts.length + replies.length} ${postNoun}. Review and Save Voice.`);
   } catch (err) {
     restore();
     if (err.message === 'RECHARGE_REQUIRED') {
@@ -474,8 +488,10 @@ async function generateToneFromProfile() {
       setToneStatus('Failed: ' + err.message, true);
     }
   } finally {
-    btnGenerateTone.disabled    = false;
-    btnGenerateTone.textContent = 'Generate';
+    if (btnGenerateTone) {
+      btnGenerateTone.disabled    = false;
+      btnGenerateTone.textContent = 'Generate';
+    }
   }
 }
 
@@ -585,7 +601,7 @@ function renderCard(item, idx) {
         <button class="btn-remove-card" data-idx="${idx}" title="Remove">×</button>
       </div>
     </div>
-    <div class="card-tweet">${escapeHtml(item.post.tweetText)}</div>
+    <div class="card-tweet">${escapeHtml(item.post.linkedinText || item.post.tweetText)}</div>
     <textarea class="card-textarea" rows="3">${escapeHtml(item.reply || '')}</textarea>
     <div class="card-actions">
       <button class="btn-open-reply secondary small" data-idx="${idx}">Open</button>
@@ -690,7 +706,7 @@ async function executeCompose(idx, pageFn, pendingStatus, doneStatus) {
   updateCardStatus(idx, pendingStatus);
   try {
     await ensureComposeInjected();
-    await callPageFn(platformTabId, pageFn, [item.post.tweetUrl, replyText]);
+    await callPageFn(platformTabId, pageFn, [item.post.linkedinUrl || item.post.tweetUrl, replyText]);
     replyItems[idx].reply = replyText;
     updateCardStatus(idx, doneStatus);
     await saveItems();
@@ -715,7 +731,7 @@ async function postSingleReply(idx) {
 
     if (item.autoLike && !item.liked) {
       try {
-        await callPageFn(platformTabId, activePlatform.pageFns.likePost, [item.post.tweetUrl]);
+        await callPageFn(platformTabId, activePlatform.pageFns.likePost, [item.post.linkedinUrl || item.post.tweetUrl]);
         updateLikedStatus(idx);
         await saveItems();
       } catch (likeErr) {
@@ -723,7 +739,7 @@ async function postSingleReply(idx) {
       }
     }
 
-    await callPageFn(platformTabId, activePlatform.pageFns.postReply, [item.post.tweetUrl, replyText]);
+    await callPageFn(platformTabId, activePlatform.pageFns.postReply, [item.post.linkedinUrl || item.post.tweetUrl, replyText]);
     replyItems[idx].reply = replyText;
     updateCardStatus(idx, 'posted');
     await saveItems();
@@ -741,11 +757,12 @@ async function processPostsToReplies(posts, apiKey) {
   }
 
   if (!posts || posts.length === 0) {
-    alert('No tweets found. Make sure there are tweets visible on the page.');
+    const postNoun = activePlatform.id === 'linkedin' ? 'posts' : 'tweets';
+    alert(`No ${postNoun} found. Make sure there are ${postNoun} visible on the page.`);
     return false;
   }
 
-  const prevByUrl = new Map(replyItems.map(i => [i.post.tweetUrl, i]));
+  const prevByUrl = new Map(replyItems.map(i => [i.post.linkedinUrl || i.post.tweetUrl, i]));
   replyItems             = [];
   cardsSection.innerHTML = '';
   composeInjected        = false;
@@ -762,7 +779,8 @@ async function processPostsToReplies(posts, apiKey) {
     progressText.textContent = `Generating ${i + 1} / ${posts.length} (@${post.username || '?'})…`;
     progressBar.style.width  = `${Math.round((i / posts.length) * 100)}%`;
 
-    const prev     = prevByUrl.get(post.tweetUrl);
+    const postUrl  = post.linkedinUrl || post.tweetUrl;
+    const prev     = prevByUrl.get(postUrl);
     const liked    = prev?.liked || false;
     const autoLike = liked ? false : (prev?.autoLike ?? autoLikeDefault);
     let   reply    = '';
@@ -773,7 +791,7 @@ async function processPostsToReplies(posts, apiKey) {
       status = prev.status;
     } else {
       try {
-        reply = await callLLM(post.tweetText, apiKey, prompt, model, provider);
+        reply = await callLLM(post.linkedinText || post.tweetText, apiKey, prompt, model, provider);
       } catch (err) {
         if (err.message === 'RECHARGE_REQUIRED') {
           progressRow.classList.add('hidden');
@@ -783,7 +801,7 @@ async function processPostsToReplies(posts, apiKey) {
           return false;
         }
         status = 'error';
-        console.error('LLM error for', post.tweetUrl, err);
+        console.error('LLM error for', postUrl, err);
       }
     }
 
@@ -792,7 +810,8 @@ async function processPostsToReplies(posts, apiKey) {
   }
 
   progressBar.style.width  = '100%';
-  progressText.textContent = `Done — ${posts.length} tweet${posts.length === 1 ? '' : 's'} processed`;
+  const postNoun = activePlatform.id === 'linkedin' ? 'post' : 'tweet';
+  progressText.textContent = `Done — ${posts.length} ${postNoun}${posts.length === 1 ? '' : 's'} processed`;
 
   await saveItems();
   updateDraftCounter();
@@ -867,7 +886,7 @@ async function generateCurrentReplies() {
 async function scrollToFirstPending() {
   const first = replyItems.find(i => i.status === 'pending');
   if (!first || !await ensurePlatformTab()) return;
-  const statusId = activePlatform.parseStatusId(first.post.tweetUrl);
+  const statusId = activePlatform.parseStatusId(first.post.linkedinUrl || first.post.tweetUrl);
   if (!statusId) return;
   await callPageFn(platformTabId, activePlatform.scrollToPendingFn, [statusId]);
   await sleep(600);
@@ -920,6 +939,57 @@ function renderPlatformToggle() {
 }
 
 // Apply all platform-dependent chrome to the static UI (labels, draft visibility).
+async function loadPlatformVoiceState() {
+  const customVoicesKey   = `customVoices_${activePlatform.id}`;
+  const voiceOverridesKey = `voiceOverrides_${activePlatform.id}`;
+  const selectedVoiceKey_  = `selectedVoice_${activePlatform.id}`;
+
+  const stored = await chrome.storage.local.get([
+    customVoicesKey,
+    voiceOverridesKey,
+    selectedVoiceKey_,
+    'customVoices',
+    'voiceOverrides',
+    'selectedVoice'
+  ]);
+
+  if (stored[customVoicesKey]) {
+    customVoices = stored[customVoicesKey];
+  } else {
+    if (activePlatform.id === 'x' && stored.customVoices) {
+      customVoices = stored.customVoices;
+      await chrome.storage.local.set({ [customVoicesKey]: customVoices });
+    } else {
+      customVoices = [];
+    }
+  }
+
+  if (stored[voiceOverridesKey]) {
+    voiceOverrides = stored[voiceOverridesKey];
+  } else {
+    if (activePlatform.id === 'x' && stored.voiceOverrides) {
+      voiceOverrides = stored.voiceOverrides;
+      await chrome.storage.local.set({ [voiceOverridesKey]: voiceOverrides });
+    } else {
+      voiceOverrides = {};
+    }
+  }
+
+  VOICES = getPlatformVoices();
+
+  if (stored[selectedVoiceKey_]) {
+    selectedVoiceKey = stored[selectedVoiceKey_];
+  } else {
+    if (activePlatform.id === 'x' && stored.selectedVoice) {
+      selectedVoiceKey = stored.selectedVoice;
+      await chrome.storage.local.set({ [selectedVoiceKey_]: selectedVoiceKey });
+    } else {
+      const voiceKeys = Object.keys(VOICES);
+      selectedVoiceKey = voiceKeys.length > 0 ? voiceKeys[0] : '';
+    }
+  }
+}
+
 function applyPlatformUI() {
   document.title = `${activePlatform.name} Reply Bot`;
   if (loginModalTitle) loginModalTitle.textContent = activePlatform.loginLabel;
@@ -929,14 +999,12 @@ function applyPlatformUI() {
   }
   document.body.classList.toggle('no-drafts', !activePlatform.caps.supportsDrafts);
 
-  // Load platform-specific voices
-  VOICES = getPlatformVoices();
-  const voiceKeys = Object.keys(VOICES);
-  if (!selectedVoiceKey.startsWith('cv:') && !VOICES[selectedVoiceKey]) {
-    selectedVoiceKey = voiceKeys.length > 0 ? voiceKeys[0] : '';
+  const importGroup = document.getElementById('profile-import-group');
+  if (importGroup) {
+    importGroup.classList.toggle('hidden', activePlatform.id === 'linkedin');
   }
-  renderVoiceButtons();
 
+  renderVoiceButtons();
   renderPlatformToggle();
 }
 
@@ -990,6 +1058,7 @@ async function selectPlatform(id) {
   if (!PLATFORMS[id] || id === activePlatform.id) return;
   activePlatform = PLATFORMS[id];
   await chrome.storage.local.set({ platformOverride: id });
+  await loadPlatformVoiceState();
   applyPlatformUI();
   await loadPlatformState();
 }
@@ -999,8 +1068,7 @@ async function selectPlatform(id) {
 async function init() {
   const stored = await chrome.storage.local.get([
     'openaiApiKey', 'deepseekApiKey', 'anthropicApiKey', 'xaiApiKey',
-    'selectedProvider', 'selectedVoice', 'customVoices', 'voiceOverrides',
-    'displayMode', 'selectedModel', 'autoLikeEnabled', 'postDelay',
+    'selectedProvider', 'displayMode', 'selectedModel', 'autoLikeEnabled', 'postDelay',
   ]);
 
   selectedProvider     = stored.selectedProvider || 'openai';
@@ -1018,11 +1086,8 @@ async function init() {
   if (stored.postDelay != null) postDelayInput.value = stored.postDelay;
   updateDelayWarning();
 
-  customVoices     = stored.customVoices  || [];
-  voiceOverrides   = stored.voiceOverrides || {};
-  selectedVoiceKey = stored.selectedVoice || 'mert';
-
   activePlatform = PLATFORMS[await resolveActivePlatformId()] || PLATFORMS.x;
+  await loadPlatformVoiceState();
   applyPlatformUI();
   await loadPlatformState();
 
@@ -1069,7 +1134,7 @@ async function init() {
       return;
     }
     selectedVoiceKey = voiceKey;
-    await chrome.storage.local.set({ selectedVoice: voiceKey });
+    await chrome.storage.local.set({ [`selectedVoice_${activePlatform.id}`]: voiceKey });
     renderVoiceButtons();
   });
 
@@ -1081,10 +1146,12 @@ async function init() {
 
   btnBack.addEventListener('click', hideCustomVoiceScreen);
 
-  btnGenerateTone.addEventListener('click', generateToneFromProfile);
-  profileUsernameInput.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') { e.preventDefault(); generateToneFromProfile(); }
-  });
+  if (btnGenerateTone) btnGenerateTone.addEventListener('click', generateToneFromProfile);
+  if (profileUsernameInput) {
+    profileUsernameInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); generateToneFromProfile(); }
+    });
+  }
 
   btnSaveVoice.addEventListener('click', async () => {
     const prompt = customVoicePromptInput.value.trim();
@@ -1099,14 +1166,14 @@ async function init() {
           if (name) cv.name = name;
           cv.prompt = prompt;
         }
-        await chrome.storage.local.set({ customVoices });
+        await chrome.storage.local.set({ [`customVoices_${activePlatform.id}`]: customVoices });
       } else {
         if (prompt === VOICES[editingVoiceKey]?.prompt) {
           delete voiceOverrides[editingVoiceKey];
         } else {
           voiceOverrides[editingVoiceKey] = prompt;
         }
-        await chrome.storage.local.set({ voiceOverrides });
+        await chrome.storage.local.set({ [`voiceOverrides_${activePlatform.id}`]: voiceOverrides });
       }
       flashMessage(voiceSavedMsg);
       setTimeout(() => { hideCustomVoiceScreen(); renderVoiceButtons(); }, 1000);
@@ -1121,7 +1188,7 @@ async function init() {
     customVoices.push(newVoice);
     selectedVoiceKey = newVoice.id;
 
-    await chrome.storage.local.set({ customVoices, selectedVoice: selectedVoiceKey });
+    await chrome.storage.local.set({ [`customVoices_${activePlatform.id}`]: customVoices, [`selectedVoice_${activePlatform.id}`]: selectedVoiceKey });
     customVoiceNameInput.value   = '';
     customVoicePromptInput.value = '';
 
@@ -1133,7 +1200,7 @@ async function init() {
   btnResetVoice.addEventListener('click', async () => {
     if (!editingVoiceKey || editingVoiceKey.startsWith('cv:')) return;
     delete voiceOverrides[editingVoiceKey];
-    await chrome.storage.local.set({ voiceOverrides });
+    await chrome.storage.local.set({ [`voiceOverrides_${activePlatform.id}`]: voiceOverrides });
     customVoicePromptInput.value = VOICES[editingVoiceKey].prompt;
     flashMessage(voiceSavedMsg);
   });
@@ -1143,8 +1210,11 @@ async function init() {
     if (!btn) return;
     const id = btn.dataset.id;
     customVoices = customVoices.filter(cv => cv.id !== id);
-    if (selectedVoiceKey === id) selectedVoiceKey = 'mert';
-    await chrome.storage.local.set({ customVoices, selectedVoice: selectedVoiceKey });
+    if (selectedVoiceKey === id) {
+      const keys = Object.keys(VOICES);
+      selectedVoiceKey = keys.length > 0 ? keys[0] : '';
+    }
+    await chrome.storage.local.set({ [`customVoices_${activePlatform.id}`]: customVoices, [`selectedVoice_${activePlatform.id}`]: selectedVoiceKey });
     renderSavedVoicesList();
     renderVoiceButtons();
   });
@@ -1252,7 +1322,7 @@ async function init() {
       const replyText = getCardReplyText(idx);
       try {
         await ensureComposeInjected();
-        await callPageFn(platformTabId, activePlatform.pageFns.openReply, [item.post.tweetUrl, replyText]);
+        await callPageFn(platformTabId, activePlatform.pageFns.openReply, [item.post.linkedinUrl || item.post.tweetUrl, replyText]);
       } catch (err) {
         alert('Could not open reply compose: ' + err.message);
       }

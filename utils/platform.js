@@ -13,14 +13,24 @@
 // adapter. The arrows are serialized by chrome.scripting.executeScript and run in
 // the page, so they must reference ONLY page globals + their args (no closures).
 
-const PAGE_FNS = {
+const PAGE_FNS_X = {
   autoScrollAndScrape:  (n)       => autoScrollAndScrape(n),
   scrapeCurrentView:    ()        => scrapeCurrentView(),
-  scrapeAuthoredTweets: (h, n, c) => scrapeAuthoredTweets(h, n, c),
+  scrapeAuthoredPosts:  (h, n, c) => scrapeAuthoredTweets(h, n, c),
   openReply:            (url, t)  => openReply(url, t),
   postReply:            (url, t)  => postReply(url, t),
   saveDraft:            (url, t)  => saveDraft(url, t),
   likePost:             (url)     => likeTweet(url),
+};
+
+const PAGE_FNS_LINKEDIN = {
+  autoScrollAndScrape:  (n)       => autoScrollAndScrape(n),
+  scrapeCurrentView:    ()        => scrapeCurrentView(),
+  scrapeAuthoredPosts:  (h, n, c) => scrapeAuthoredPosts(h, n, c),
+  openReply:            (url, t)  => openReply(url, t),
+  postReply:            (url, t)  => postReply(url, t),
+  saveDraft:            (url, t)  => saveDraft(url, t),
+  likePost:             (url)     => likePost(url),
 };
 
 export const PLATFORMS = {
@@ -70,7 +80,7 @@ export const PLATFORMS = {
       window.scrollTo({ top: 0, behavior: 'instant' });
     },
 
-    pageFns: PAGE_FNS,
+    pageFns: PAGE_FNS_X,
 
     caps: { supportsDrafts: true, reactLabel: 'Like' },
 
@@ -133,7 +143,7 @@ export const PLATFORMS = {
       window.scrollTo({ top: 0, behavior: 'instant' });
     },
 
-    pageFns: PAGE_FNS,
+    pageFns: PAGE_FNS_LINKEDIN,
 
     caps: { supportsDrafts: false, reactLabel: 'Like' },
 

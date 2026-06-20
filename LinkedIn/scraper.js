@@ -7,11 +7,11 @@
 //   - componentkey="expanded<POSTID>FeedType_MAIN_FEED_RELEVANCE" on the post listitem
 //   - aria-label="Open control menu for post by <Name>" → author display name
 //
-// Because the feed exposes no public permalink, each post's canonical `tweetUrl` is a
+// Because the feed exposes no public permalink, each post's canonical `linkedinUrl` is a
 // synthetic handle carrying the opaque POSTID; compose.js re-finds the post in the feed
 // by that POSTID (all LinkedIn actions happen in-feed, no navigation needed).
 //
-// Canonical post shape: { username, tweetText, tweetUrl, timePostedISO }.
+// Canonical post shape: { username, linkedinText, linkedinUrl, timePostedISO }.
 
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -180,7 +180,7 @@ function extractPost(root) {
   }
 
   // Build the complete post text representation for UI/LLM context
-  let tweetText = text;
+  let linkedinText = text;
 
   if (docInfo) {
     const docParts = [];
@@ -196,61 +196,128 @@ function extractPost(root) {
         docStr += `\n` + slideAlts.join('\n');
       }
     }
-    tweetText = (tweetText + docStr).trim();
+    linkedinText = (linkedinText + docStr).trim();
   } else if (images.length > 0) {
     const imgAlts = images
       .map((img, index) => img.alt ? `[Image ${index + 1}: ${img.alt}]` : '[Image]')
       .filter(Boolean);
     if (imgAlts.length > 0) {
-      tweetText = (tweetText + `\n\n` + imgAlts.join('\n')).trim();
+      linkedinText = (linkedinText + `\n\n` + imgAlts.join('\n')).trim();
     }
   }
 
-  if (!tweetText) return null;
+  if (!linkedinText) return null;
 
   const { displayName, username } = getAuthor(root);
 
   console.log(`[Scraped Post] Profile: ${displayName} (@${username})`, {
     username,
     displayName,
-    linkedinText: tweetText,
+    linkedinText: linkedinText,
     linkedinUrl: `https://www.linkedin.com/feed/?postId=${id}`,
     timePostedISO: getTimeISO(root)
   });
 
   return {
     username: username || displayName || null,
-    tweetText: tweetText,
-    linkedinText: tweetText,
+    tweetText: linkedinText,
+    linkedinText: linkedinText,
     tweetUrl: `https://www.linkedin.com/feed/?postId=${id}`,
     linkedinUrl: `https://www.linkedin.com/feed/?postId=${id}`,
     timePostedISO: getTimeISO(root),
   };
 }
 
+function scrollFeed(distance) {
+  // 1. Try global window scroll
+  window.scrollBy(0, distance);
+
+  // 2. Try scrolling element
+  if (document.scrollingElement) {
+    document.scrollingElement.scrollTop += distance;
+  }
+
+  // 3. Try any overflow scrollable div containers on the page
+  const scrollableDivs = Array.from(document.querySelectorAll('div')).filter(el => {
+    const style = window.getComputedStyle(el);
+    return (style.overflowY === 'auto' || style.overflowY === 'scroll') && el.scrollHeight > el.clientHeight;
+  });
+  for (const div of scrollableDivs) {
+    div.scrollTop += distance;
+  }
+}
+
+function getScrollHeight() {
+  let maxHeight = document.documentElement.scrollHeight || document.body.scrollHeight || 0;
+  const scrollableDivs = Array.from(document.querySelectorAll('div')).filter(el => {
+    const style = window.getComputedStyle(el);
+    return (style.overflowY === 'auto' || style.overflowY === 'scroll');
+  });
+  for (const div of scrollableDivs) {
+    maxHeight = Math.max(maxHeight, div.scrollHeight);
+  }
+  return maxHeight;
+}
+
 // Auto-scroll the feed and scrape up to maxPosts posts (human-like lag).
 async function autoScrollAndScrape(maxPosts = 10) {
   const seen = new Set();
   const posts = [];
-  let stale = 0;
-  let lastHeight = 0;
+  const processedIds = new Set();
 
-  while (posts.length < maxPosts && stale < 4) {
-    for (const el of getFeedPosts()) {
-      if (posts.length >= maxPosts) break;
-      const post = extractPost(el);
-      if (!post || seen.has(post.tweetUrl)) continue;
-      seen.add(post.tweetUrl);
-      posts.push(post);
+  while (posts.length < maxPosts) {
+    const feedPosts = getFeedPosts();
+
+    // Find the first post element we haven't processed yet
+    const nextEl = feedPosts.find(el => {
+      const id = getPostId(el);
+      return id && !processedIds.has(id);
+    });
+
+    if (nextEl) {
+      // Scroll to post by bringing it on the screen
+      nextEl.scrollIntoView({ behavior: 'instant', block: 'center' });
+      await sleep(500); // Sleep to let the post settle/render
+
+      const post = extractPost(nextEl);
+      if (post && !seen.has(post.linkedinUrl)) {
+        seen.add(post.linkedinUrl);
+        posts.push(post);
+      }
+      
+      const id = getPostId(nextEl);
+      processedIds.add(id);
+    } else {
+      // If the next post is still loading, scroll the last post into view to trigger loading
+      if (feedPosts.length > 0) {
+        const lastEl = feedPosts[feedPosts.length - 1];
+        lastEl.scrollIntoView({ behavior: 'instant', block: 'center' });
+      } else {
+        scrollFeed(800);
+      }
+
+      console.log(`[Scraper] Waiting for new posts to load...`);
+      let loadedNew = false;
+      for (let attempt = 0; attempt < 5; attempt++) {
+        await sleep(4000);
+        const currentFeedPosts = getFeedPosts();
+        const hasNew = currentFeedPosts.some(el => {
+          const id = getPostId(el);
+          return id && !processedIds.has(id);
+        });
+        if (hasNew) {
+          console.log(`[Scraper] New posts loaded!`);
+          loadedNew = true;
+          break;
+        }
+      }
+
+      // If no new posts loaded after 20 seconds, we stop to avoid an infinite loop
+      if (!loadedNew) {
+        console.log(`[Scraper] No new posts loaded after 20 seconds. Stopping scrape.`);
+        break;
+      }
     }
-    if (posts.length >= maxPosts) break;
-
-    window.scrollBy(0, randInt(600, 1000));
-    await sleep(randInt(800, 1600));
-
-    const height = document.documentElement.scrollHeight;
-    if (height === lastHeight) stale++; else stale = 0;
-    lastHeight = height;
   }
 
   return { posts, loggedIn: isLoggedIn() };
@@ -266,8 +333,8 @@ function scrapeCurrentView() {
     const rect = el.getBoundingClientRect();
     if (rect.bottom <= 0 || rect.top >= viewportHeight) continue;
     const post = extractPost(el);
-    if (!post || seen.has(post.tweetUrl)) continue;
-    seen.add(post.tweetUrl);
+    if (!post || seen.has(post.linkedinUrl)) continue;
+    seen.add(post.linkedinUrl);
     posts.push(post);
   }
 
@@ -282,7 +349,7 @@ function getProfileDisplayName() {
 
 // Scrape a member's authored post text (for tone generation), scrolling with
 // human-like lag. Runs on /in/<vanity>/recent-activity/* pages.
-async function scrapeAuthoredTweets(handle, maxCount = 50, maxChars = 300) {
+async function scrapeAuthoredPosts(handle, maxCount = 50, maxChars = 300) {
   const seen = new Set();
   const texts = [];
   let stale = 0;

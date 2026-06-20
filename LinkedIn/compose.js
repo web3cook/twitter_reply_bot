@@ -1,11 +1,11 @@
 // LinkedIn/compose.js — runs in the linkedin.com page context (injected via executeScript).
 //
 // Targets LinkedIn's NEW redesigned feed (see LinkedIn/scraper.js for the hook rationale).
-// Posts are re-found in the feed by the opaque POSTID carried in the synthetic tweetUrl
+// Posts are re-found in the feed by the opaque POSTID carried in the synthetic linkedinUrl
 // (no navigation — all actions happen inline in the feed):
 //   - openReply(url, text) → open the comment box and insert text (no submit)
 //   - postReply(url, text) → post a comment
-//   - likeTweet(url)       → React (Like)
+//   - likePost(url)        → React (Like)
 //   - saveDraft(url, text) → not supported (Draft UI is hidden for LinkedIn)
 //
 // Stable hooks: componentkey="expanded<POSTID>FeedType_MAIN_FEED_RELEVANCE" (post root),
@@ -58,6 +58,25 @@ function findUpdateById(postId) {
   );
 }
 
+function scrollFeed(distance) {
+  // 1. Try global window scroll
+  window.scrollBy(0, distance);
+
+  // 2. Try scrolling element
+  if (document.scrollingElement) {
+    document.scrollingElement.scrollTop += distance;
+  }
+
+  // 3. Try any overflow scrollable div containers on the page
+  const scrollableDivs = Array.from(document.querySelectorAll('div')).filter(el => {
+    const style = window.getComputedStyle(el);
+    return (style.overflowY === 'auto' || style.overflowY === 'scroll') && el.scrollHeight > el.clientHeight;
+  });
+  for (const div of scrollableDivs) {
+    div.scrollTop += distance;
+  }
+}
+
 // Scroll the feed until the target post is in the DOM, then return it.
 async function waitForUpdate(postId, timeout = 60000) {
   const start = Date.now();
@@ -72,7 +91,13 @@ async function waitForUpdate(postId, timeout = 60000) {
     }
     if (Date.now() - start >= timeout) throw new Error('post not found in feed');
 
-    window.scrollBy({ top: scrollStep, behavior: 'instant' });
+    // Scroll by bringing the last loaded post listitem into the viewport
+    const updates = document.querySelectorAll('[role="listitem"][componentkey^="expanded"]');
+    if (updates.length > 0) {
+      updates[updates.length - 1].scrollIntoView({ behavior: 'instant', block: 'center' });
+    } else {
+      scrollFeed(scrollStep);
+    }
     await sleep(500);
   }
 }
@@ -184,7 +209,7 @@ async function postReply(url, text) {
 }
 
 // React (Like) to a post.
-async function likeTweet(url) {
+async function likePost(url) {
   const postId = getPostId(url);
   if (!postId) throw new Error('Could not extract post id from URL: ' + url);
 
