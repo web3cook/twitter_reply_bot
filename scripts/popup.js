@@ -21,7 +21,11 @@ function getPlatformVoices() {
   } else if (activePlatform.id === 'linkedin') {
     const v = {};
     Object.keys(LinkedInVoices).forEach(key => {
-      const label = key.charAt(0).toUpperCase() + key.slice(1);
+      // Split camelCase export names into readable labels:
+      // "AkshatShrivastav" → "Akshat Shrivastav", "GaryVee" → "Gary Vee".
+      const label = key
+        .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+        .replace(/^./, c => c.toUpperCase());
       v[key] = { label, prompt: LinkedInVoices[key] };
     });
     return v;
