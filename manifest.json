@@ -2,7 +2,7 @@
   "name": "brainX",
   "short_name": "brainX",
   "description": "Reads X/Twitter and LinkedIn posts and replies in a persona/voice you choose or create.",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "manifest_version": 3,
   "minimum_chrome_version": "116",
   "permissions": [
