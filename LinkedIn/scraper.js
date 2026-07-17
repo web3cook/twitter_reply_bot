@@ -247,6 +247,16 @@ function scrollFeed(distance) {
   }
 }
 
+// LinkedIn sometimes gates further feed content behind a "Load more" button
+// instead of infinite scroll so we need to click it when present.
+function clickLoadMoreIfPresent() {
+  const btn = [...document.querySelectorAll('button')]
+    .find(b => /load more/i.test((b.innerText || '').trim()));
+  if (!btn) return false;
+  btn.click();
+  return true;
+}
+
 function getScrollHeight() {
   let maxHeight = document.documentElement.scrollHeight || document.body.scrollHeight || 0;
   const scrollableDivs = Array.from(document.querySelectorAll('div')).filter(el => {
@@ -299,6 +309,7 @@ async function autoScrollAndScrape(maxPosts = 10) {
       console.log(`[Scraper] Waiting for new posts to load...`);
       let loadedNew = false;
       for (let attempt = 0; attempt < 5; attempt++) {
+        clickLoadMoreIfPresent();
         await sleep(4000);
         const currentFeedPosts = getFeedPosts();
         const hasNew = currentFeedPosts.some(el => {
@@ -367,6 +378,7 @@ async function scrapeAuthoredPosts(handle, maxCount = 50, maxChars = 300) {
     }
     if (texts.length >= maxCount) break;
 
+    clickLoadMoreIfPresent();
     window.scrollBy(0, randInt(500, 1000));
     await sleep(randInt(800, 1600));
     if (Math.random() < 0.2) await sleep(randInt(700, 1500));
