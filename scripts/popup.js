@@ -3,6 +3,15 @@ import * as LinkedInVoices from '../utils/linkedin_voices.js';
 import { PROVIDERS, callLLM, generatePersona } from '../utils/models.js';
 import { PLATFORMS, resolveActivePlatformId } from '../utils/platform.js';
 import { getPlatformTab, waitForTabComplete, navigateTab } from '../utils/tabs.js';
+import {
+  beginManualPasteLogin,
+  completeManualPasteLogin,
+  cancelPendingLogin,
+  loadTokens as loadXaiTokens,
+  clearTokens as clearXaiTokens,
+  getValidAccessToken,
+  isSignedIn as isXaiSignedIn,
+} from '../subscriptions/xai.js';
 
 const DRAFT_DELAY_MS = 200;
 
@@ -52,11 +61,31 @@ let voiceOverrides   = {};
 let editingVoiceKey  = null;
 let selectedVoiceKey = 'mert';
 let selectedProvider = 'openai';
+/** @type {'subscription'|'apikey'} how xAI authenticates */
+let xaiAuthMode      = 'subscription';
 let autoLikeDefault  = false;
 let loggedInUsername = null;
 
 const loginModal             = document.getElementById('login-modal');
 const loginModalTitle        = document.getElementById('login-modal-title');
+const xaiAuthNeededModal     = document.getElementById('xai-auth-needed-modal');
+const btnXaiAuthNeededSignin = document.getElementById('btn-xai-auth-needed-signin');
+const btnXaiAuthNeededCancel = document.getElementById('btn-xai-auth-needed-cancel');
+const xaiPasteModal          = document.getElementById('xai-paste-modal');
+const xaiPasteInput          = document.getElementById('xai-paste-input');
+const xaiPasteError          = document.getElementById('xai-paste-error');
+const btnXaiPasteSubmit      = document.getElementById('btn-xai-paste-submit');
+const btnXaiPasteCancel      = document.getElementById('btn-xai-paste-cancel');
+const apiKeyRow              = document.getElementById('api-key-row');
+const xaiAuthModeRow         = document.getElementById('xai-auth-mode-row');
+const xaiAuthModeButtons     = document.getElementById('xai-auth-mode-buttons');
+const xaiSubRow              = document.getElementById('xai-sub-row');
+const xaiSubSignedOut        = document.getElementById('xai-sub-signed-out');
+const xaiSubSignedIn         = document.getElementById('xai-sub-signed-in');
+const xaiSubEmail            = document.getElementById('xai-sub-email');
+const xaiSubMsg              = document.getElementById('xai-sub-msg');
+const btnXaiSignin           = document.getElementById('btn-xai-signin');
+const btnXaiSignout          = document.getElementById('btn-xai-signout');
 const platformToggle         = document.getElementById('platform-toggle');
 const btnOpenXLogin          = document.getElementById('btn-open-x-login');
 const btnCheckAgain          = document.getElementById('btn-check-again');
@@ -378,11 +407,154 @@ function loadModels(provider, apiKey, savedModel) {
     .catch(() => {});
 }
 
-function updateProviderUI(provider, apiKeyValue) {
+function renderXaiAuthModeButtons() {
+  if (!xaiAuthModeButtons) return;
+  xaiAuthModeButtons.querySelectorAll('.mode-btn').forEach((btn) => {
+    btn.classList.toggle('active', btn.dataset.xaiAuth === xaiAuthMode);
+  });
+}
+
+async function updateProviderUI(provider, apiKeyValue) {
   const p = PROVIDERS[provider];
   apiKeyLabel.textContent  = p.keyLabel;
   apiKeyInput.placeholder  = p.keyPlaceholder;
   apiKeyInput.value        = apiKeyValue || '';
+
+  const isXai = provider === 'xai';
+  if (xaiAuthModeRow) xaiAuthModeRow.classList.toggle('hidden', !isXai);
+
+  if (isXai) {
+    renderXaiAuthModeButtons();
+    const useSub = xaiAuthMode === 'subscription';
+    if (apiKeyRow) apiKeyRow.classList.toggle('hidden', useSub);
+    if (xaiSubRow) xaiSubRow.classList.toggle('hidden', !useSub);
+    if (useSub) await refreshXaiSubscriptionUI();
+  } else {
+    if (apiKeyRow) apiKeyRow.classList.remove('hidden');
+    if (xaiSubRow) xaiSubRow.classList.add('hidden');
+  }
+}
+
+async function setXaiAuthMode(mode) {
+  if (mode !== 'subscription' && mode !== 'apikey') return;
+  xaiAuthMode = mode;
+  await chrome.storage.local.set({ xaiAuthMode: mode });
+  const p = PROVIDERS.xai;
+  const stored = await chrome.storage.local.get(p.storageKey);
+  await updateProviderUI('xai', stored[p.storageKey]);
+  const cred = await resolveProviderCredential('xai');
+  loadModels('xai', cred, getSelectedModel());
+}
+
+async function refreshXaiSubscriptionUI() {
+  if (!xaiSubRow || selectedProvider !== 'xai' || xaiAuthMode !== 'subscription') return;
+  const tokens = await loadXaiTokens();
+  const signedIn = isXaiSignedIn(tokens);
+  if (xaiSubSignedOut) xaiSubSignedOut.classList.toggle('hidden', signedIn);
+  if (xaiSubSignedIn) xaiSubSignedIn.classList.toggle('hidden', !signedIn);
+  if (xaiSubEmail) {
+    xaiSubEmail.textContent = tokens?.email ? ` (${tokens.email})` : '';
+  }
+}
+
+function showXaiPasteError(msg) {
+  if (!xaiPasteError) return;
+  if (!msg) {
+    xaiPasteError.textContent = '';
+    xaiPasteError.classList.add('hidden');
+    return;
+  }
+  xaiPasteError.textContent = msg;
+  xaiPasteError.classList.remove('hidden');
+}
+
+function openXaiPasteModal() {
+  if (xaiPasteInput) xaiPasteInput.value = '';
+  showXaiPasteError('');
+  if (xaiPasteModal) xaiPasteModal.classList.remove('hidden');
+}
+
+function closeXaiPasteModal() {
+  if (xaiPasteModal) xaiPasteModal.classList.add('hidden');
+  showXaiPasteError('');
+}
+
+function closeXaiAuthNeededModal() {
+  if (xaiAuthNeededModal) xaiAuthNeededModal.classList.add('hidden');
+}
+
+async function startXaiSignIn() {
+  closeXaiAuthNeededModal();
+  try {
+    const { authorizeUrl } = await beginManualPasteLogin();
+    await chrome.tabs.create({ url: authorizeUrl });
+    openXaiPasteModal();
+  } catch (err) {
+    alert('Could not start Grok sign-in: ' + (err.message || err));
+  }
+}
+
+async function submitXaiPasteLogin() {
+  const pasted = xaiPasteInput ? xaiPasteInput.value : '';
+  btnXaiPasteSubmit.disabled = true;
+  try {
+    await completeManualPasteLogin(pasted);
+    closeXaiPasteModal();
+    await refreshXaiSubscriptionUI();
+    if (xaiSubMsg) {
+      xaiSubMsg.textContent = 'Signed in!';
+      flashMessage(xaiSubMsg);
+    }
+    // Refresh model list using the new access token
+    try {
+      const token = await getValidAccessToken();
+      loadModels('xai', token, getSelectedModel());
+    } catch { /* models stay on static list */ }
+  } catch (err) {
+    showXaiPasteError(err.message || String(err));
+  } finally {
+    btnXaiPasteSubmit.disabled = false;
+  }
+}
+
+async function signOutXai() {
+  await clearXaiTokens();
+  await cancelPendingLogin();
+  await refreshXaiSubscriptionUI();
+  if (xaiSubMsg) {
+    xaiSubMsg.textContent = 'Signed out';
+    flashMessage(xaiSubMsg);
+  }
+}
+
+/**
+ * Resolve a Bearer credential for the active provider.
+ * xAI: SuperGrok OAuth when mode is subscription, else API key.
+ * Others: stored API key.
+ * @returns {Promise<string|null>}
+ */
+async function resolveProviderCredential(provider = selectedProvider) {
+  if (provider === 'xai' && xaiAuthMode === 'subscription') {
+    try {
+      return await getValidAccessToken();
+    } catch {
+      return null;
+    }
+  }
+  const p = PROVIDERS[provider];
+  const stored = await chrome.storage.local.get(p.storageKey);
+  return stored[p.storageKey] || null;
+}
+
+/** Prompt the user when credential is missing. Opens xAI modal or Settings. */
+function promptMissingCredential(provider = selectedProvider) {
+  if (provider === 'xai' && xaiAuthMode === 'subscription') {
+    if (xaiAuthNeededModal) xaiAuthNeededModal.classList.remove('hidden');
+    return;
+  }
+  const p = PROVIDERS[provider];
+  alert(`Set your ${p.name} API key in Settings first.`);
+  document.getElementById('settings-section').open = true;
 }
 
 function getSelectedModel() {
@@ -424,9 +596,16 @@ async function generateToneFromProfile() {
   if (!handle) { setToneStatus('Could not read a username from that.', true); return; }
 
   const p = PROVIDERS[selectedProvider];
-  const storedKey = await chrome.storage.local.get(p.storageKey);
-  const apiKey = storedKey[p.storageKey];
-  if (!apiKey) { setToneStatus(`Set your ${p.name} API key in Settings first.`, true); return; }
+  const apiKey = await resolveProviderCredential(selectedProvider);
+  if (!apiKey) {
+    if (selectedProvider === 'xai' && xaiAuthMode === 'subscription') {
+      setToneStatus('Sign in with Grok in Settings first.', true);
+      promptMissingCredential('xai');
+    } else {
+      setToneStatus(`Set your ${p.name} API key in Settings first.`, true);
+    }
+    return;
+  }
 
   if (!await ensurePlatformTab()) { setToneStatus(`Open ${activePlatform.name} in a tab first.`, true); return; }
 
@@ -487,7 +666,12 @@ async function generateToneFromProfile() {
   } catch (err) {
     restore();
     if (err.message === 'RECHARGE_REQUIRED') {
-      setToneStatus('Your API key has no credits. Please recharge it.', true);
+      setToneStatus(
+        selectedProvider === 'xai' && xaiAuthMode === 'subscription'
+          ? 'Grok subscription has no remaining quota. Check SuperGrok / Premium+.'
+          : 'Your API key has no credits. Please recharge it.',
+        true,
+      );
     } else {
       setToneStatus('Failed: ' + err.message, true);
     }
@@ -777,6 +961,7 @@ async function processPostsToReplies(posts, apiKey) {
   const prompt   = resolvePrompt();
   const model    = getSelectedModel();
   const provider = selectedProvider;
+  let token      = apiKey;
 
   for (let i = 0; i < posts.length; i++) {
     const post = posts[i];
@@ -795,11 +980,17 @@ async function processPostsToReplies(posts, apiKey) {
       status = prev.status;
     } else {
       try {
-        reply = await callLLM(post.linkedinText || post.tweetText, apiKey, prompt, model, provider);
+        if (provider === 'xai' && xaiAuthMode === 'subscription') {
+          token = (await resolveProviderCredential('xai')) || token;
+        }
+        reply = await callLLM(post.linkedinText || post.tweetText, token, prompt, model, provider);
       } catch (err) {
         if (err.message === 'RECHARGE_REQUIRED') {
           progressRow.classList.add('hidden');
-          alert(`Your ${PROVIDERS[provider].name} API key has run out of credits.\n\nPlease recharge your account and try again.`);
+          const msg = provider === 'xai' && xaiAuthMode === 'subscription'
+            ? 'Your Grok subscription has no remaining quota for this API, or the account is not eligible.\n\nCheck SuperGrok / X Premium+ and try again.'
+            : `Your ${PROVIDERS[provider].name} API key has run out of credits.\n\nPlease recharge your account and try again.`;
+          alert(msg);
           await saveItems();
           updateDraftCounter();
           return false;
@@ -823,12 +1014,9 @@ async function processPostsToReplies(posts, apiKey) {
 }
 
 async function generateReplies() {
-  const p = PROVIDERS[selectedProvider];
-  const stored = await chrome.storage.local.get(p.storageKey);
-  const apiKey = stored[p.storageKey];
+  const apiKey = await resolveProviderCredential(selectedProvider);
   if (!apiKey) {
-    alert(`Set your ${p.name} API key in Settings first.`);
-    document.getElementById('settings-section').open = true;
+    promptMissingCredential(selectedProvider);
     return;
   }
 
@@ -850,18 +1038,17 @@ async function generateReplies() {
     return;
   }
 
-  await processPostsToReplies(posts, apiKey);
+  // Re-resolve so a refresh mid-wait is picked up; for xAI getValidAccessToken refreshes as needed.
+  const token = (await resolveProviderCredential(selectedProvider)) || apiKey;
+  await processPostsToReplies(posts, token);
   btnGenerate.disabled    = false;
   btnGenerate.textContent = 'Generate Replies';
 }
 
 async function generateCurrentReplies() {
-  const p = PROVIDERS[selectedProvider];
-  const stored = await chrome.storage.local.get(p.storageKey);
-  const apiKey = stored[p.storageKey];
+  const apiKey = await resolveProviderCredential(selectedProvider);
   if (!apiKey) {
-    alert(`Set your ${p.name} API key in Settings first.`);
-    document.getElementById('settings-section').open = true;
+    promptMissingCredential(selectedProvider);
     return;
   }
 
@@ -882,7 +1069,8 @@ async function generateCurrentReplies() {
     return;
   }
 
-  await processPostsToReplies(posts, apiKey);
+  const token = (await resolveProviderCredential(selectedProvider)) || apiKey;
+  await processPostsToReplies(posts, token);
   btnReplyCurrent.disabled    = false;
   btnReplyCurrent.textContent = 'Reply Current';
 }
@@ -1072,13 +1260,17 @@ async function selectPlatform(id) {
 async function init() {
   const stored = await chrome.storage.local.get([
     'openaiApiKey', 'deepseekApiKey', 'anthropicApiKey', 'xaiApiKey',
-    'selectedProvider', 'displayMode', 'selectedModel', 'autoLikeEnabled', 'postDelay',
+    'selectedProvider', 'xaiAuthMode', 'displayMode', 'selectedModel', 'autoLikeEnabled', 'postDelay',
   ]);
 
   selectedProvider     = stored.selectedProvider || 'openai';
+  xaiAuthMode          = stored.xaiAuthMode === 'apikey' ? 'apikey' : 'subscription';
   providerSelect.value = selectedProvider;
-  updateProviderUI(selectedProvider, stored[PROVIDERS[selectedProvider].storageKey]);
-  loadModels(selectedProvider, stored[PROVIDERS[selectedProvider].storageKey], stored.selectedModel);
+  await updateProviderUI(selectedProvider, stored[PROVIDERS[selectedProvider].storageKey]);
+  const initCredential = selectedProvider === 'xai'
+    ? (await resolveProviderCredential('xai'))
+    : stored[PROVIDERS[selectedProvider].storageKey];
+  loadModels(selectedProvider, initCredential, stored.selectedModel);
 
   const displayMode = stored.displayMode || 'sidepanel';
   renderModeButtons(displayMode);
@@ -1250,8 +1442,11 @@ async function init() {
     selectedProvider = providerSelect.value;
     const p = PROVIDERS[selectedProvider];
     const stored = await chrome.storage.local.get(p.storageKey);
-    updateProviderUI(selectedProvider, stored[p.storageKey]);
-    loadModels(selectedProvider, stored[p.storageKey], null);
+    await updateProviderUI(selectedProvider, stored[p.storageKey]);
+    const cred = selectedProvider === 'xai'
+      ? (await resolveProviderCredential('xai'))
+      : stored[p.storageKey];
+    loadModels(selectedProvider, cred, null);
     await chrome.storage.local.set({ selectedProvider, selectedModel: p.defaultModel });
   });
 
@@ -1263,6 +1458,25 @@ async function init() {
     flashMessage(keySavedMsg);
     loadModels(selectedProvider, k, getSelectedModel());
   });
+
+  if (btnXaiSignin) btnXaiSignin.addEventListener('click', startXaiSignIn);
+  if (btnXaiSignout) btnXaiSignout.addEventListener('click', signOutXai);
+  if (btnXaiAuthNeededSignin) btnXaiAuthNeededSignin.addEventListener('click', startXaiSignIn);
+  if (btnXaiAuthNeededCancel) btnXaiAuthNeededCancel.addEventListener('click', closeXaiAuthNeededModal);
+  if (btnXaiPasteSubmit) btnXaiPasteSubmit.addEventListener('click', submitXaiPasteLogin);
+  if (btnXaiPasteCancel) {
+    btnXaiPasteCancel.addEventListener('click', async () => {
+      await cancelPendingLogin();
+      closeXaiPasteModal();
+    });
+  }
+  if (xaiAuthModeButtons) {
+    xaiAuthModeButtons.addEventListener('click', (e) => {
+      const btn = e.target.closest('.mode-btn');
+      if (!btn?.dataset.xaiAuth) return;
+      setXaiAuthMode(btn.dataset.xaiAuth);
+    });
+  }
 
   modelSelect.addEventListener('change', async () => {
     const isCustom = modelSelect.value === 'custom';

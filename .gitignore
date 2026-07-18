@@ -15,7 +15,6 @@ bin-release/
 testhtml.html
 node_modules/
 .claude
-CLAUDE.md
 
 .DS_Store
 # Project files, i.e. `.project`, `.actionScriptProperties` and `.flexProperties`
