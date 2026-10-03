@@ -20,6 +20,38 @@
     </div>
   </div>
 
+  <!-- Missing Grok subscription credentials (Generate / Reply Current) -->
+  <div id="xai-auth-needed-modal" class="modal hidden">
+    <div class="modal-box">
+      <div class="modal-icon">✦</div>
+      <h2>Sign in with Grok</h2>
+      <p>xAI uses your SuperGrok / X Premium+ subscription. No API key needed.</p>
+      <div class="modal-actions">
+        <button id="btn-xai-auth-needed-signin">Sign in with Grok</button>
+        <button id="btn-xai-auth-needed-cancel" class="secondary">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Manual paste OAuth callback modal -->
+  <div id="xai-paste-modal" class="modal hidden">
+    <div class="modal-box modal-box-wide">
+      <div class="modal-icon">✦</div>
+      <h2>Finish Grok sign-in</h2>
+      <ol class="modal-steps">
+        <li>A browser tab opened for xAI login (SuperGrok / Premium+).</li>
+        <li>After you approve, the page will fail to load (connection refused on 127.0.0.1). That is expected.</li>
+        <li>Copy the <strong>full URL</strong> from the address bar and paste it below.</li>
+      </ol>
+      <textarea id="xai-paste-input" rows="3" placeholder="http://127.0.0.1:56121/callback?code=...&amp;state=..."></textarea>
+      <span id="xai-paste-error" class="modal-error hidden"></span>
+      <div class="modal-actions">
+        <button id="btn-xai-paste-submit">Complete sign-in</button>
+        <button id="btn-xai-paste-cancel" class="secondary">Cancel</button>
+      </div>
+    </div>
+  </div>
+
   <div id="app">
 
     <!-- ── Main screen ── -->
@@ -113,13 +145,32 @@
               <option value="xai">xAI (Grok)</option>
             </select>
           </div>
-          <div class="settings-row">
+          <div class="settings-row hidden" id="xai-auth-mode-row">
+            <label class="settings-label">xAI auth</label>
+            <div id="xai-auth-mode-buttons" class="mode-buttons">
+              <button type="button" class="mode-btn active" data-xai-auth="subscription">Sign in with Grok</button>
+              <button type="button" class="mode-btn" data-xai-auth="apikey">API key</button>
+            </div>
+          </div>
+          <div class="settings-row" id="api-key-row">
             <label class="settings-label" id="api-key-label">API Key</label>
             <div class="settings-input-row">
               <input id="api-key-input" type="password" placeholder="sk-..." />
               <button id="btn-save-key" class="small">Save</button>
             </div>
             <span id="key-saved-msg" class="hidden success-msg">Saved!</span>
+          </div>
+          <div class="settings-row hidden" id="xai-sub-row">
+            <label class="settings-label">Grok subscription</label>
+            <div id="xai-sub-signed-out" class="xai-sub-block">
+              <p class="xai-sub-hint">Sign in with SuperGrok / X Premium+. No API key needed.</p>
+              <button id="btn-xai-signin" class="small">Sign in with Grok</button>
+            </div>
+            <div id="xai-sub-signed-in" class="xai-sub-block hidden">
+              <p class="xai-sub-status">Signed in with Grok<span id="xai-sub-email"></span></p>
+              <button id="btn-xai-signout" class="small secondary">Sign out</button>
+            </div>
+            <span id="xai-sub-msg" class="hidden success-msg"></span>
           </div>
           <div class="settings-row">
             <label class="settings-label">AI Model</label>

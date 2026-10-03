@@ -41,6 +41,8 @@ export const PROVIDERS = {
     keyLabel: 'xAI API Key',
     keyPlaceholder: 'xai-...',
     storageKey: 'xaiApiKey',
+    // Auth is SuperGrok / Premium+ OAuth via subscriptions/xai.js (not this storage key).
+    usesSubscription: true,
     defaultModel: 'grok-3',
     models: [
       { id: 'grok-3',      label: 'Grok 3' },
