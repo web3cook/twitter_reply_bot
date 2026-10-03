@@ -88,3 +88,7 @@ sips -s format png -z <size> <size> brainX-black.png --out icons/icon<size>.png
 ```
 
 `manifest.json` references these in both the top-level `icons` field and `action.default_icon`.
+
+## License
+
+[MIT](LICENSE) © web3cook
