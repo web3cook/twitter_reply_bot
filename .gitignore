@@ -17,6 +17,29 @@ node_modules/
 .claude
 
 .DS_Store
+
+# Environment files and secrets (never commit)
+.env
+.env.*
+!.env.example
+!.env.sample
+*.pem
+*.p12
+*.pfx
+*.key
+id_rsa
+id_dsa
+id_ecdsa
+id_ed25519
+*.keystore
+*.jks
+credentials.json
+*-credentials.json
+service-account*.json
+secrets.json
+.secrets
+*.secret
+
 # Project files, i.e. `.project`, `.actionScriptProperties` and `.flexProperties`
 # should NOT be excluded as they contain compiler settings and other important
 # information for Eclipse / Flash Builder.

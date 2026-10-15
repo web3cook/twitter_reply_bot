@@ -1,0 +1,13 @@
+#!/bin/sh
+# Block commits that add secrets, API keys, or env files.
+# Bypass with: git commit --no-verify
+
+DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+SCAN="$DIR/scan_secrets.py"
+
+if ! command -v python3 >/dev/null 2>&1; then
+  echo "pre-commit: python3 is required to scan for secrets" >&2
+  exit 1
+fi
+
+exec python3 "$SCAN" --staged
