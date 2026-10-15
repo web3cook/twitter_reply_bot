@@ -1,0 +1,37 @@
+#!/bin/sh
+# Block pushes that add secrets, API keys, or env files.
+# Bypass with: git push --no-verify
+#
+# Git provides the remote name/url as args and the refs on stdin:
+#   <local ref> <local sha> <remote ref> <remote sha>
+
+DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+SCAN="$DIR/scan_secrets.py"
+
+if ! command -v python3 >/dev/null 2>&1; then
+  echo "pre-push: python3 is required to scan for secrets" >&2
+  exit 1
+fi
+
+status=0
+zero="0000000000000000000000000000000000000000"
+
+while read local_ref local_sha remote_ref remote_sha
+do
+  if [ -z "$local_sha" ]; then
+    continue
+  fi
+  if [ "$local_sha" = "$zero" ]; then
+    # Deleting a remote ref; nothing new to scan.
+    continue
+  fi
+  if [ -z "$remote_sha" ] || [ "$remote_sha" = "$zero" ]; then
+    remote_sha="$zero"
+  fi
+  if ! python3 "$SCAN" --rev "$local_sha" "$remote_sha"; then
+    echo "pre-push: blocked $local_ref -> $remote_ref" >&2
+    status=1
+  fi
+done
+
+exit $status
